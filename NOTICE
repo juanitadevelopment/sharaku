@@ -1,0 +1,8 @@
+Shazo
+Copyright 2026 net.teppan
+
+Licensed under the Apache License, Version 2.0.
+
+This library is a modernized extraction of the object-persistence layer from
+the "BackBone" framework suite originally authored by Tetsunori Matsubara at
+Sun Microsystems (circa 2000–2005).
