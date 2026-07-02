@@ -1,19 +1,33 @@
 package net.teppan.shazo;
 
+import java.util.AbstractMap;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.TreeMap;
+import java.util.Set;
 
 /**
  * An immutable tabular result returned by a storage operation.
  *
- * <p>Each row is a column-name-to-raw-value mapping. Column-name lookups are
- * <strong>case-insensitive</strong>, so an infuser can use {@code row.get("id")}
- * regardless of whether the backend reports {@code ID}, {@code id}, or
- * {@code Id} — this decouples describers from a backend's column-casing
- * conventions (for example H2 upper-cases names by default).
+ * <p>Each row is a column-name-to-raw-value mapping with two guarantees:
+ *
+ * <ul>
+ *   <li><strong>Column order is preserved.</strong> Iterating a row
+ *       ({@code keySet()}/{@code entrySet()}) yields the columns in the order
+ *       the backend produced them — for a JDBC backend, the {@code SELECT}
+ *       list order. Tabular consumers (grids, reports, CSV exports) can rely
+ *       on it.</li>
+ *   <li><strong>Lookups are case-insensitive.</strong> An infuser can use
+ *       {@code row.get("id")} regardless of whether the backend reports
+ *       {@code ID}, {@code id}, or {@code Id} — this decouples describers from
+ *       a backend's column-casing conventions (for example H2 upper-cases
+ *       names by default). If two columns differ only in case, both are kept
+ *       in order and a lookup resolves to the first.</li>
+ * </ul>
  *
  * <h2>Example</h2>
  * <pre>{@code
@@ -36,17 +50,61 @@ import java.util.TreeMap;
 public record RawResult(List<Map<String, Object>> rows) {
 
     /**
-     * Compact constructor — copies each row into an immutable, case-insensitive
-     * map so column lookups do not depend on the backend's column casing.
+     * Compact constructor — copies each row into an immutable map that keeps
+     * the source's column order while resolving lookups case-insensitively.
      */
     public RawResult {
-        rows = rows.stream().map(RawResult::caseInsensitive).toList();
+        rows = rows.stream().map(row -> (Map<String, Object>) new Row(row)).toList();
     }
 
-    private static Map<String, Object> caseInsensitive(Map<String, Object> row) {
-        var map = new TreeMap<String, Object>(String.CASE_INSENSITIVE_ORDER);
-        map.putAll(row);
-        return Collections.unmodifiableMap(map);
+    /**
+     * An immutable row: iteration follows the source map's insertion order
+     * (the backend's column order), while {@code get}/{@code containsKey}
+     * resolve column names case-insensitively.
+     */
+    private static final class Row extends AbstractMap<String, Object> {
+
+        private final Map<String, Object> ordered;    // insertion order, original keys
+        private final Map<String, String> canonical;  // folded key -> first original key
+
+        Row(Map<String, Object> source) {
+            var byInsertion = new LinkedHashMap<String, Object>(source);
+            var byFoldedKey = new HashMap<String, String>(byInsertion.size());
+            for (String key : byInsertion.keySet()) {
+                byFoldedKey.putIfAbsent(fold(key), key);
+            }
+            this.ordered   = Collections.unmodifiableMap(byInsertion);
+            this.canonical = byFoldedKey;
+        }
+
+        private static String fold(String key) {
+            return key.toLowerCase(Locale.ROOT);
+        }
+
+        private String resolve(Object key) {
+            return (key instanceof String s) ? canonical.get(fold(s)) : null;
+        }
+
+        @Override
+        public Object get(Object key) {
+            String actual = resolve(key);
+            return actual == null ? null : ordered.get(actual);
+        }
+
+        @Override
+        public boolean containsKey(Object key) {
+            return resolve(key) != null;
+        }
+
+        @Override
+        public Set<Entry<String, Object>> entrySet() {
+            return ordered.entrySet();   // unmodifiable, insertion-ordered
+        }
+
+        @Override
+        public int size() {
+            return ordered.size();
+        }
     }
 
     /**

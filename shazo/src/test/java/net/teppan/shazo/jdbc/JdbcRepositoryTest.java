@@ -214,6 +214,41 @@ class JdbcRepositoryTest {
         assertThat(repo.catalog(new Person(null, null, 0)).isEmpty()).isTrue();
     }
 
+    @Test
+    void catalogPreservesSelectColumnOrder() throws ShazoException {
+        repo.store(new Person("1", "Alice", 30));
+
+        // The fixture catalogs "SELECT id, name, age"; the row must iterate in
+        // exactly that order (H2 reports the names upper-case), not alphabetically.
+        var row = repo.catalog(new Person(null, null, 0)).rows().getFirst();
+        assertThat(row.keySet()).containsExactly("ID", "NAME", "AGE");
+    }
+
+    @Test
+    void columnAliasesAreHonored() throws ShazoException {
+        repo.store(new Person("1", "Alice", 30));
+
+        // getColumnLabel: "AS person_key" must become the row key, portably.
+        Describer<Person, SqlCommand> aliased = Describer.<Person, SqlCommand>builder()
+            .contains(p -> List.of())
+            .store(p    -> List.of())
+            .delete(p   -> List.of())
+            .retrieve(p -> List.of(SqlCommand.of(
+                "SELECT id AS person_key, name FROM person WHERE id = ?", p.id())))
+            .catalog(p  -> List.of(SqlCommand.of(
+                "SELECT id AS person_key FROM person ORDER BY id")))
+            .infuser(r  -> r.primary().first().map(row -> new Person(
+                (String) row.get("person_key"), (String) row.get("name"), 0)).orElseThrow())
+            .build();
+        var aliasRepo = new JdbcRepository<>(dataSource, aliased);
+
+        var table = aliasRepo.catalog(new Person(null, null, 0));
+        assertThat(table.rows().getFirst().get("person_key")).isEqualTo("1");
+
+        var person = aliasRepo.retrieve(new Person("1", null, 0)).orElseThrow();
+        assertThat(person.id()).isEqualTo("1");
+    }
+
     // ── transact ─────────────────────────────────────────────────────────────
 
     @Test

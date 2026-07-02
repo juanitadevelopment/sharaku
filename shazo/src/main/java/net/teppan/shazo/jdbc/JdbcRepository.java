@@ -169,7 +169,11 @@ public final class JdbcRepository<T> extends AbstractRepository<T, SqlCommand> {
         while (rs.next()) {
             var row = new LinkedHashMap<String, Object>(cols);
             for (int i = 1; i <= cols; i++) {
-                row.put(meta.getColumnName(i), rs.getObject(i));
+                // getColumnLabel honours SELECT ... AS aliases (per the JDBC
+                // spec; equal to getColumnName when no alias is given). Some
+                // drivers (pgjdbc, MySQL) alias both, but H2 distinguishes
+                // them — using the label keeps describers portable.
+                row.put(meta.getColumnLabel(i), rs.getObject(i));
             }
             rows.add(Collections.unmodifiableMap(row));
         }
