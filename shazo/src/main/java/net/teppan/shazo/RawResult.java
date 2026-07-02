@@ -99,7 +99,7 @@ public record RawResult(List<Map<String, Object>> rows) {
      * Extracts and converts a column value from the first row using a
      * {@link Producer}.
      *
-     * @param column   the column name (case-sensitive)
+     * @param column   the column name (case-insensitive, like all row lookups)
      * @param producer the value converter
      * @param <T>      the target type
      * @return the produced value, or empty if there are no rows or the column

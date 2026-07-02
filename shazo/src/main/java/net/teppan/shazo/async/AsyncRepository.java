@@ -29,9 +29,12 @@ import java.util.concurrent.Executors;
  *      .thenAccept(opt -> opt.ifPresent(this::render))
  *      .exceptionally(ex -> { log.error("retrieval failed", ex); return null; });
  *
- * async.catalog(criteria)
+ * async.gather(criteria)                       // typed objects
  *      .thenApply(persons -> persons.stream().map(Person::name).toList())
  *      .thenAccept(names -> ...);
+ *
+ * async.catalog(criteria)                      // raw table (RawResult)
+ *      .thenAccept(table -> render(table.rows()));
  * }</pre>
  *
  * <h2>Exception handling</h2>

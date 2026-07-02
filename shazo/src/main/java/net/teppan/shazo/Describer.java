@@ -6,9 +6,11 @@ import java.util.function.Function;
 
 /**
  * Bridges a domain type {@code T} to a storage system by providing five
- * command-generation strategies — one per {@link Repository} operation —
- * together with the {@link Infuser} and {@link Verifier}
- * that interpret the resulting {@link RawResult}.
+ * command-generation strategies — covering all seven {@link Repository}
+ * operations, since {@code find} and {@code gather} are derived from
+ * {@code catalog} + {@code retrieve} — together with the {@link Infuser},
+ * the optional {@code key} extractor, and the {@link Verifier} that
+ * interpret the resulting {@link RawResult}.
  *
  * <p>The command type {@code C} is fixed at compile time, so a describer is
  * bound to a single storage backend: a {@code Describer<T, SqlCommand>} can
@@ -147,9 +149,10 @@ public interface Describer<T, C extends Command> {
 
     /**
      * Fluent builder for a {@link Describer}.
-     * All five command generators, the {@code infuser}, and the {@code key}
-     * are required; {@link #verifier} is optional (defaults to
-     * {@link Verifier#nonEmpty()}).
+     * All five command generators and the {@code infuser} are required.
+     * {@code key} is optional — a describer built without it does not support
+     * {@code find}/{@code gather} — and {@link #verifier} defaults to
+     * {@link Verifier#nonEmpty()}.
      *
      * @param <T> the domain type
      * @param <C> the storage command type

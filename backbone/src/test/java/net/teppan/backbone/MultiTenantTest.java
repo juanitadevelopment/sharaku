@@ -13,6 +13,7 @@ import javax.sql.DataSource;
 import java.io.Serializable;
 import java.time.Duration;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.function.Function;
@@ -93,6 +94,25 @@ class MultiTenantTest {
             var item = runner.forTenant("globex").run(
                 ctx -> ctx.retrieve(Item.class, new Item("x", null)).orElseThrow(), Principal.system());
             assertThat(item.name()).isEqualTo("Via-Ambient");
+        }
+    }
+
+    @Test
+    void withTenant_isRespectedByLocaleOverload() throws Exception {
+        // Regression: run(service, principal, locale) used to hardcode tenant=null,
+        // silently routing to the default tenant inside a withTenant scope.
+        try (var runner = ServiceRunner.builder().tenantRouter(router).describers(repos).build()) {
+            String seen = runner.withTenant("acme", () ->
+                runner.run(ctx -> ctx.tenant().orElse("?"), Principal.system(), Locale.JAPAN));
+            assertThat(seen).isEqualTo("acme");
+
+            // Data written through the locale overload lands in the ambient tenant.
+            runner.withTenant("globex", () ->
+                runner.run(ctx -> { ctx.store(new Item("loc", "Via-Locale")); return null; },
+                    Principal.system(), Locale.JAPAN));
+            var item = runner.forTenant("globex").run(
+                ctx -> ctx.retrieve(Item.class, new Item("loc", null)).orElseThrow(), Principal.system());
+            assertThat(item.name()).isEqualTo("Via-Locale");
         }
     }
 

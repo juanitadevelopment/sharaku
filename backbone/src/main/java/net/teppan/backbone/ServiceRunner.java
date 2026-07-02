@@ -46,12 +46,17 @@ import java.util.function.Function;
  *
  * <h2>Example</h2>
  * <pre>{@code
+ * var repos = Repositories.builder()
+ *         .register(Order.class, orderDescriber)
+ *         .build();
+ *
  * try (var runner = ServiceRunner.builder()
  *         .dataSource(dataSource)
+ *         .describers(repos)
  *         .durableEvents(OrderCreated.class)
  *         .subscribe(OrderCreated.class, e -> mailer.sendConfirmation(e.orderId()))
  *         .register("createOrder", ctx -> {
- *             ctx.repository(orderDescriber).store(order);
+ *             ctx.repository(Order.class).store(order);
  *             ctx.publish(new OrderCreated(order.id()));
  *             return order.id();
  *         })
@@ -120,7 +125,9 @@ public final class ServiceRunner implements AutoCloseable {
     // ── Named service execution ───────────────────────────────────────────────
 
     /**
-     * Executes a registered service by name using the default locale and no tenant.
+     * Executes a registered service by name using the default locale, routed to
+     * the ambient tenant when one is established via {@link #withTenant} (else
+     * the default tenant).
      *
      * @param name      the service name; never {@code null}
      * @param principal the authenticated caller; never {@code null}
@@ -174,7 +181,9 @@ public final class ServiceRunner implements AutoCloseable {
     // ── Ad-hoc service execution ──────────────────────────────────────────────
 
     /**
-     * Runs an ad-hoc (non-registered) service using the default locale and no tenant.
+     * Runs an ad-hoc (non-registered) service using the default locale, routed to
+     * the ambient tenant when one is established via {@link #withTenant} (else
+     * the default tenant).
      *
      * @param service   the service to execute; never {@code null}
      * @param principal the authenticated caller; never {@code null}
@@ -187,7 +196,9 @@ public final class ServiceRunner implements AutoCloseable {
     }
 
     /**
-     * Runs an ad-hoc service with an explicit locale.
+     * Runs an ad-hoc service with an explicit locale, routed to the ambient
+     * tenant when one is established via {@link #withTenant} (else the default
+     * tenant) — like every overload that does not take an explicit tenant.
      *
      * @param service   the service to execute; never {@code null}
      * @param principal the authenticated caller; never {@code null}
@@ -198,7 +209,7 @@ public final class ServiceRunner implements AutoCloseable {
      */
     public <R> R run(AppService<R> service, Principal principal, Locale locale)
             throws AppServiceException {
-        return run(service, principal, null, locale);
+        return run(service, principal, ambientTenant.get(), locale);
     }
 
     /**
@@ -277,9 +288,10 @@ public final class ServiceRunner implements AutoCloseable {
 
     /**
      * Runs {@code action} with {@code tenant} established as the ambient tenant,
-     * so any {@link #execute(String, Principal)} / {@link #run(AppService, Principal)}
-     * call made within (across however many layers) routes to that tenant without
-     * passing it explicitly. Intended for a request boundary (e.g. a web filter).
+     * so any {@code execute}/{@code run} overload that does not take an explicit
+     * tenant parameter (with or without a locale) routes to that tenant — across
+     * however many layers — without passing it explicitly. Intended for a request
+     * boundary (e.g. a web filter).
      *
      * <p>The binding is restored on exit, even on exception. Nested
      * {@code withTenant} calls override for their own scope.
@@ -578,7 +590,13 @@ public final class ServiceRunner implements AutoCloseable {
         }
     }
 
-    /** Outbox deliverer: dispatch to subscribers, logging (not aggregating) failures. */
+    /**
+     * Outbox deliverer: dispatch to subscribers in order. A listener failure
+     * propagates to the {@link Outbox}, which records the attempt and redelivers
+     * the <em>whole event</em> later — at-least-once per event, not per
+     * subscriber, so listeners that already succeeded will see it again and
+     * must be idempotent.
+     */
     @SuppressWarnings("unchecked")
     private void deliver(Object event) {
         for (Subscription<?> sub : subscriptions) {

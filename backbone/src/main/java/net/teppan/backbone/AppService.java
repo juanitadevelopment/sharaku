@@ -11,13 +11,15 @@ package net.teppan.backbone;
  * throws, the transaction is rolled back and those deferred actions are
  * discarded.
  *
- * <p>Within a service, obtain repositories from the context — they share the
- * transaction, so writes across several domain types commit atomically:
+ * <p>Within a service, obtain repositories from the context by domain type —
+ * each type is registered once on the runner via
+ * {@link ServiceRunner.Builder#describers}. They share the transaction, so
+ * writes across several domain types commit atomically:
  *
  * <pre>{@code
  * AppService<String> createOrder = ctx -> {
- *     var orders = ctx.repository(orderDescriber);
- *     var audit  = ctx.repository(auditDescriber);
+ *     var orders = ctx.repository(Order.class);
+ *     var audit  = ctx.repository(AuditLog.class);
  *     orders.store(order);                       // same transaction
  *     audit.store(new AuditLog(order.id(), "created"));
  *     ctx.publish(new OrderCreated(order.id())); // delivered after commit

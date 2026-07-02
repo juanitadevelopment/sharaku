@@ -27,8 +27,8 @@ import java.util.Optional;
  *       declaration order. If any delegate throws, remaining delegates are
  *       still attempted; the first exception is re-thrown after all delegates
  *       have been called.</li>
- *   <li>{@code contains}, {@code retrieve}, {@code catalog} — served
- *       exclusively from the primary repository.</li>
+ *   <li>{@code contains}, {@code retrieve}, {@code find}, {@code catalog},
+ *       {@code gather} — served exclusively from the primary repository.</li>
  * </ul>
  *
  * <h2>Example</h2>
@@ -48,7 +48,8 @@ public final class MixedRepository<T> implements Repository<T> {
     /**
      * Creates a {@code MixedRepository} from two or more delegate repositories.
      * {@code first} is designated as the primary and is used for all read
-     * operations ({@code contains}, {@code retrieve}, {@code catalog}).
+     * operations ({@code contains}, {@code retrieve}, {@code find},
+     * {@code catalog}, {@code gather}).
      * Write operations ({@code store}, {@code delete}) fan out to every delegate.
      *
      * @param <T>   the domain type

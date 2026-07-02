@@ -25,9 +25,8 @@ import java.util.Objects;
  *
  * <p>{@code JdbcRepository} accepts a {@link DataSource} (supplied by the
  * caller — any JDBC pool such as HikariCP works) and a {@link Describer} that
- * produces {@link SqlCommand} directives.  Each call to
- * {@link #contains}/{@link #store}/{@link #delete}/{@link #retrieve}/{@link #catalog}
- * borrows a connection from the pool, executes the commands, and returns it.
+ * produces {@link SqlCommand} directives.  Each operation borrows a connection
+ * from the pool, executes its commands, and returns it.
  *
  * <h2>Creating a repository</h2>
  * <pre>{@code
@@ -41,13 +40,12 @@ import java.util.Objects;
  *     .retrieve(p  -> List.of(SqlCommand.of(
  *         "SELECT id, name, age FROM person WHERE id = ?", p.id())))
  *     .catalog(p   -> List.of(SqlCommand.of("SELECT id, name, age FROM person")))
- *     .infuser(result -> result.first().map(row -> new Person(
- *         (String) row.get("ID"), (String) row.get("NAME"),
- *         ((Number) row.get("AGE")).intValue())).orElseThrow())
- *     .gatherer(result -> result.rows().stream()
- *         .map(row -> new Person(
- *             (String) row.get("ID"), (String) row.get("NAME"),
- *             ((Number) row.get("AGE")).intValue())).toList())
+ *     .key(row     -> new Person((String) row.get("id"), null, 0))  // catalog row -> key query
+ *     .infuser(results -> {
+ *         var row = results.primary().first().orElseThrow();
+ *         return new Person((String) row.get("id"), (String) row.get("name"),
+ *                           ((Number) row.get("age")).intValue());
+ *     })
  *     .build();
  *
  * var repo = new JdbcRepository<>(ds, describer);

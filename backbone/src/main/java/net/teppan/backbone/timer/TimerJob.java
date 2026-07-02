@@ -10,10 +10,22 @@ import net.teppan.backbone.AppContext;
  *
  * <pre>{@code
  * TimerJob cleanup = ctx -> {
- *     ctx.repository(expiredSessionDescriber).delete(new ExpiredSession());
+ *     try (var ps = ctx.connection().prepareStatement(
+ *             "DELETE FROM session WHERE expires_at < CURRENT_TIMESTAMP")) {
+ *         ps.executeUpdate();
+ *     }
  * };
  * scheduler.schedule("session-cleanup", Duration.ofHours(1), cleanup);
  * }</pre>
+ *
+ * <p><strong>Current limitations.</strong> The scheduler's internal runner has
+ * no describer registry and no event subscribers: use
+ * {@link AppContext#connection()} for storage access
+ * ({@link AppContext#repository(Class)} and {@code store}/{@code retrieve} by
+ * type throw {@link IllegalStateException}), and events published via
+ * {@link AppContext#publish} from a timer job are <em>not delivered</em> to
+ * anyone. To publish real events from scheduled work, have the job invoke your
+ * application's own {@code ServiceRunner}.
  *
  * @see TimerScheduler
  */

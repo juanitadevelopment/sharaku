@@ -27,5 +27,8 @@ tasks.named<JavaExec>("run") {
     args("--storage=jdbc", "--port=8080", "--db-path=./memo-db")
 }
 
-// Sample module — nothing to publish to Maven.
+// Sample module — nothing to publish to Maven, and no API-doc consumers
+// (the strict Xdoclint:all convention from the root build stays for the
+// published :shazo and :backbone modules only).
 tasks.withType<AbstractPublishToMaven>().configureEach { enabled = false }
+tasks.javadoc { enabled = false }

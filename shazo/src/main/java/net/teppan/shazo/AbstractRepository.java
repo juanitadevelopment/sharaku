@@ -6,13 +6,14 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Skeletal {@link Repository} implementation that drives all five operations
+ * Skeletal {@link Repository} implementation that drives all seven operations
  * through a {@link Describer}, leaving only storage execution to subclasses.
  *
  * <p>Subclasses implement {@link #execute(List)} to run a list of commands of
  * type {@code C} against their storage backend and return a {@link RawResult}.
- * The five {@link Repository} methods are implemented here by composing
- * the describer's command generators with the execution result.
+ * The seven {@link Repository} methods are implemented here by composing the
+ * describer's command generators with the execution result ({@code find} and
+ * {@code gather} are derived: catalog the matching keys, then retrieve each).
  *
  * <p>Because the command type {@code C} is a type parameter, a subclass that
  * binds {@code C} to a concrete command type (e.g. {@code SqlCommand}) can only

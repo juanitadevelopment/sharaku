@@ -54,11 +54,9 @@ import java.util.stream.Collectors;
  *     .delete (e -> List.of())
  *     .retrieve(e -> List.of(ShellCommand.of("grep", e.id(), "/var/log/app.log")))
  *     .catalog (e -> List.of(ShellCommand.of("tail", "-n", "100", "/var/log/app.log")))
- *     .infuser (result -> result.firstValue("line", Producer.asString())
+ *     .infuser (results -> results.primary().firstValue("line", Producer.asString())
  *         .map(LogEntry::parse).orElseThrow())
- *     .gatherer(result -> result.rows().stream()
- *         .map(row -> LogEntry.parse((String) row.get("line"))).toList())
- *     .build();
+ *     .build();   // no key(): find/gather are unsupported for this describer
  *
  * var repo = new ShellRepository<>(describer);
  * }</pre>
