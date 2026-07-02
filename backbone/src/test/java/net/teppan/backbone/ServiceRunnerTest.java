@@ -299,8 +299,37 @@ class ServiceRunnerTest {
             ctx.afterCommit(() -> { throw new RuntimeException("second"); });
             return null;
         }, Principal.anonymous()))
+            .isInstanceOf(PostCommitException.class)
+            .satisfies(e -> assertThat(e.getSuppressed()).hasSize(2))
+            .satisfies(e -> assertThat(((PostCommitException) e).failures()).hasSize(2));
+    }
+
+    @Test
+    void postCommitFailure_throwsPostCommitException_afterTheChangeIsCommitted() throws Exception {
+        // A-7: an after-commit failure must not look like a rolled-back service.
+        var runner = ServiceRunner.builder().dataSource(ds).describers(repos).build();
+        assertThatThrownBy(() -> runner.run(ctx -> {
+            ctx.store(new Item("committed", "Persisted"));
+            ctx.afterCommit(() -> { throw new RuntimeException("side effect failed"); });
+            return null;
+        }, Principal.anonymous()))
+            .isInstanceOf(PostCommitException.class);
+        // The business change is durable despite the post-commit failure.
+        assertThat(persisted("committed")).isTrue();
+    }
+
+    @Test
+    void serviceBodyFailure_throwsPlainAppServiceException_notPostCommit() throws Exception {
+        // The complement: a rolled-back service is a plain AppServiceException,
+        // so callers can tell "safe to retry" from "already committed".
+        var runner = ServiceRunner.builder().dataSource(ds).describers(repos).build();
+        assertThatThrownBy(() -> runner.run(ctx -> {
+            ctx.store(new Item("rolledback", "Gone"));
+            throw new AppServiceException("boom");
+        }, Principal.anonymous()))
             .isInstanceOf(AppServiceException.class)
-            .satisfies(e -> assertThat(e.getSuppressed()).hasSize(2));
+            .isNotInstanceOf(PostCommitException.class);
+        assertThat(persisted("rolledback")).isFalse();
     }
 
     // ── Nested composition ─────────────────────────────────────────────────────

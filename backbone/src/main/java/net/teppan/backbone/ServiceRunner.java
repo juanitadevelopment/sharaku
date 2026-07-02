@@ -44,6 +44,13 @@ import java.util.function.Function;
  * at-least-once, surviving restarts. Either way they reach the same
  * {@linkplain Builder#subscribe subscribers}.
  *
+ * <p>In-process event listeners and {@linkplain AppContext#afterCommit
+ * after-commit} actions run <em>after</em> the transaction commits. If one
+ * throws, {@code execute}/{@code run} report it as a {@link PostCommitException}
+ * (a subtype of {@link AppServiceException}) — signalling that the business
+ * change is already durable and must not be retried. A plain
+ * {@link AppServiceException} means the service failed and rolled back.
+ *
  * <h2>Example</h2>
  * <pre>{@code
  * var repos = Repositories.builder()
@@ -571,9 +578,11 @@ public final class ServiceRunner implements AutoCloseable {
             }
         }
         if (!errors.isEmpty()) {
-            var ex = new AppServiceException("One or more post-commit actions failed");
-            errors.forEach(ex::addSuppressed);
-            throw ex;
+            // The transaction has already committed; signal that with a distinct
+            // type so callers do not mistake this for a rolled-back service and
+            // retry an already-applied change.
+            throw new PostCommitException(
+                errors.size() + " post-commit action(s) failed after commit", errors);
         }
     }
 
