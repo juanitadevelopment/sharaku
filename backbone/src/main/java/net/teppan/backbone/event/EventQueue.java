@@ -10,10 +10,12 @@ import java.util.function.Consumer;
  * queue instance.
  *
  * <p>{@link TransientEventQueue} is the in-memory implementation (events are
- * lost on restart). For durable, transactional, at-least-once delivery tied to
- * a service's commit, use {@link net.teppan.backbone.ServiceRunner}'s
+ * lost on restart); {@link PersistentEventQueue} is the durable,
+ * restart-surviving, at-least-once implementation for accepting events from
+ * outside the application. For durable delivery tied to a <em>service's</em>
+ * commit (the transactional outbox), use {@link net.teppan.backbone.ServiceRunner}'s
  * {@linkplain net.teppan.backbone.ServiceRunner.Builder#durableEvents(Class[])
- * outbox} instead of this lower-level queue.
+ * durable events} instead of this lower-level queue.
  *
  * <p>Callers should register subscribers before publishing events to avoid
  * a brief window where events are dispatched to no listener.

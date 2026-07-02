@@ -2,6 +2,7 @@ package net.teppan.backbone;
 
 import net.teppan.backbone.event.Outbox;
 import net.teppan.backbone.event.OutboxEntry;
+import net.teppan.backbone.event.PersistentEventQueue;
 import net.teppan.shazo.ShazoException;
 import net.teppan.shazo.jdbc.Repositories;
 import net.teppan.shazo.jdbc.Transactor;
@@ -12,6 +13,7 @@ import javax.sql.DataSource;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -96,18 +98,29 @@ public final class ServiceRunner implements AutoCloseable {
     private final ConcurrentHashMap<String, DataSource> dataSources = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Outbox> outboxes = new ConcurrentHashMap<>();
 
+    // Named durable intake queues (old PersistentEventQueue): one declaration per
+    // name, instantiated per tenant on first use (each on that tenant's DataSource,
+    // its own backbone_pq_<name> table), all sharing the declared subscribers.
+    private final Map<String, QueueDecl> queueDecls;
+    private final ConcurrentHashMap<String, PersistentEventQueue<?>> queues = new ConcurrentHashMap<>();
+
     // Ambient tenant for withTenant(...) scopes. ThreadLocal today; can become a
     // ScopedValue once the baseline moves to JDK 25 — the public API is unchanged.
     private final ThreadLocal<String> ambientTenant = new ThreadLocal<>();
 
     private record Subscription<E>(Class<E> type, Consumer<E> listener) {}
 
+    /** A declared persistent queue: its base type, decode allowlist, and subscribers. */
+    private record QueueDecl(Class<?> baseType, List<Class<?>> payloadTypes,
+                             List<Consumer<?>> listeners) {}
+
     private ServiceRunner(Function<String, DataSource> router, Locale defaultLocale,
                           Map<String, AppService<?>> services,
                           List<Subscription<?>> subscriptions,
                           List<Class<?>> outboxTypes,
                           Duration pollInterval, Duration retention, int maxAttempts,
-                          Repositories describers) {
+                          Repositories describers,
+                          Map<String, QueueDecl> queueDecls) {
         this.router             = router;
         this.defaultLocale      = defaultLocale;
         this.services           = Map.copyOf(services);
@@ -118,6 +131,7 @@ public final class ServiceRunner implements AutoCloseable {
         this.outboxPollInterval = pollInterval;
         this.outboxRetention    = retention;
         this.outboxMaxAttempts  = maxAttempts;
+        this.queueDecls         = Map.copyOf(queueDecls);
     }
 
     /**
@@ -420,6 +434,66 @@ public final class ServiceRunner implements AutoCloseable {
         }
     }
 
+    // ── Persistent event queues (durable external-event intake) ────────────────
+
+    /**
+     * Returns the {@link PersistentEventQueue} declared under {@code name}, for the
+     * ambient/default tenant. Equivalent to {@link #persistentQueue(String, String)}
+     * with a {@code null} tenant.
+     *
+     * @param name the queue name declared on the builder; never {@code null}
+     * @param <E>  the queue's base event type
+     * @return the queue instance (created on first use)
+     * @throws IllegalArgumentException if no queue was declared under {@code name}
+     */
+    public <E> PersistentEventQueue<E> persistentQueue(String name) {
+        return persistentQueue(name, null);
+    }
+
+    /**
+     * Returns the {@link PersistentEventQueue} declared under {@code name}, bound to
+     * {@code tenant}: a per-tenant instance on that tenant's data source (its own
+     * {@code backbone_pq_<name>} table and poller), created on first use and sharing
+     * the subscribers declared on the builder. Resolving a queue starts its poller,
+     * which drains any events left from a previous run.
+     *
+     * @param name   the queue name declared on the builder; never {@code null}
+     * @param tenant the tenant to route to; may be {@code null} for the default
+     * @param <E>    the queue's base event type
+     * @return the queue instance for that tenant
+     * @throws IllegalArgumentException if no queue was declared under {@code name}
+     */
+    @SuppressWarnings("unchecked")
+    public <E> PersistentEventQueue<E> persistentQueue(String name, String tenant) {
+        Objects.requireNonNull(name, "name");
+        var decl = queueDecls.get(name);
+        if (decl == null) {
+            throw new IllegalArgumentException("Unknown persistent queue: " + name);
+        }
+        var q = queues.computeIfAbsent(name + ' ' + tenantKey(tenant),
+            k -> createQueue(name, tenant, decl));
+        return (PersistentEventQueue<E>) q;
+    }
+
+    /**
+     * Returns the names of the declared persistent queues.
+     *
+     * @return an immutable set of queue names
+     */
+    public java.util.Set<String> persistentQueueNames() {
+        return queueDecls.keySet();
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private PersistentEventQueue<?> createQueue(String name, String tenant, QueueDecl decl) {
+        var queue = new PersistentEventQueue(name, decl.baseType(), dataSourceFor(tenant),
+            outboxPollInterval, outboxRetention, outboxMaxAttempts, decl.payloadTypes());
+        for (Consumer<?> listener : decl.listeners()) {
+            queue.subscribe((Consumer) listener);
+        }
+        return queue;
+    }
+
     // ── Nested (same-transaction) invocation — used by AppContext.call ─────────
 
     <R> R callNested(AppContext ctx, AppService<R> service) throws AppServiceException {
@@ -435,6 +509,7 @@ public final class ServiceRunner implements AutoCloseable {
     @Override
     public void close() {
         outboxes.values().forEach(Outbox::close);
+        queues.values().forEach(PersistentEventQueue::close);
     }
 
     // ── Introspection (management surface) ─────────────────────────────────────
@@ -641,8 +716,16 @@ public final class ServiceRunner implements AutoCloseable {
         private Duration outboxRetention = Duration.ofDays(7);
         private int outboxMaxAttempts = Outbox.DEFAULT_MAX_ATTEMPTS;
         private Repositories describers;
+        private final Map<String, QueueDeclBuilder> queues = new LinkedHashMap<>();
 
         private Builder() {}
+
+        /** Mutable accumulator for a persistent-queue declaration during building. */
+        private static final class QueueDeclBuilder {
+            private Class<?> baseType;
+            private final List<Class<?>> payloadTypes = new ArrayList<>();
+            private final List<Consumer<?>> listeners = new ArrayList<>();
+        }
 
         /**
          * Configures a single data source for all (single-tenant) requests.
@@ -778,6 +861,53 @@ public final class ServiceRunner implements AutoCloseable {
         }
 
         /**
+         * Declares a durable named intake queue (a {@link PersistentEventQueue}) that
+         * accepts events — typically from outside the application — and delivers them
+         * to its {@linkplain #persistentQueueListener(String, Consumer) subscribers}
+         * after commit, at-least-once, in a separate transaction. Resolve it after
+         * building via {@link ServiceRunner#persistentQueue(String)} (or the
+         * per-tenant overload) to receive or publish.
+         *
+         * <p>Calling this more than once for the same {@code name} updates the base
+         * type and adds to the decode allowlist.
+         *
+         * @param name         the queue name; must match {@code [A-Za-z][A-Za-z0-9_]*}
+         * @param baseType     the base (serializable) event type carried; never {@code null}
+         * @param payloadTypes additional concrete serializable subtypes to allowlist
+         *                     for decoding beyond {@code baseType}
+         * @param <E>          the base event type
+         * @return this builder
+         */
+        public <E> Builder persistentQueue(String name, Class<E> baseType, Class<?>... payloadTypes) {
+            Objects.requireNonNull(name, "name");
+            Objects.requireNonNull(baseType, "baseType");
+            var decl = queues.computeIfAbsent(name, k -> new QueueDeclBuilder());
+            decl.baseType = baseType;
+            for (var t : payloadTypes) {
+                decl.payloadTypes.add(Objects.requireNonNull(t, "payloadType"));
+            }
+            return this;
+        }
+
+        /**
+         * Subscribes a listener to a persistent queue declared with
+         * {@link #persistentQueue(String, Class, Class[])}. The listener is applied
+         * to every (per-tenant) instance of that queue and runs after commit, on the
+         * poller thread, in its own transaction; it must be idempotent.
+         *
+         * @param name     the declared queue name; never {@code null}
+         * @param listener the event consumer; never {@code null}
+         * @param <E>      the event type
+         * @return this builder
+         */
+        public <E> Builder persistentQueueListener(String name, Consumer<E> listener) {
+            Objects.requireNonNull(name, "name");
+            Objects.requireNonNull(listener, "listener");
+            queues.computeIfAbsent(name, k -> new QueueDeclBuilder()).listeners.add(listener);
+            return this;
+        }
+
+        /**
          * Builds the {@link ServiceRunner}.
          *
          * @return a new runner
@@ -788,9 +918,20 @@ public final class ServiceRunner implements AutoCloseable {
             if (router == null) {
                 throw new IllegalStateException("a dataSource or tenantRouter must be set");
             }
+            var decls = new LinkedHashMap<String, QueueDecl>();
+            for (var e : queues.entrySet()) {
+                var d = e.getValue();
+                if (d.baseType == null) {
+                    throw new IllegalStateException(
+                        "persistent queue '" + e.getKey() + "' has listeners but no"
+                        + " persistentQueue(name, baseType) declaration");
+                }
+                decls.put(e.getKey(),
+                    new QueueDecl(d.baseType, List.copyOf(d.payloadTypes), List.copyOf(d.listeners)));
+            }
             return new ServiceRunner(router, defaultLocale, services, subscriptions,
                 outboxTypes, outboxPollInterval, outboxRetention,
-                outboxMaxAttempts, describers);
+                outboxMaxAttempts, describers, decls);
         }
     }
 }

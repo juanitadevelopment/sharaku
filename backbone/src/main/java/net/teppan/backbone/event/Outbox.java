@@ -62,6 +62,10 @@ public final class Outbox implements AutoCloseable {
     /** Default number of delivery attempts before an event is dead-lettered. */
     public static final int DEFAULT_MAX_ATTEMPTS = 10;
 
+    /** The default outbox table, managed by versioned migrations. */
+    static final String DEFAULT_TABLE = "backbone_outbox";
+
+    private final String tableName;
     private final DataSource dataSource;
     private final Codec<Serializable> codec;
     private final Consumer<Object> deliverer;
@@ -103,6 +107,30 @@ public final class Outbox implements AutoCloseable {
     public Outbox(DataSource dataSource, Consumer<Object> deliverer,
                   List<Class<?>> eventTypes, Duration pollInterval, Duration retention,
                   int maxAttempts) {
+        this(dataSource, deliverer, eventTypes, pollInterval, retention, maxAttempts, DEFAULT_TABLE);
+    }
+
+    /**
+     * Creates and starts an outbox backed by a named table. The default table
+     * ({@value #DEFAULT_TABLE}) is provisioned by versioned migrations; any other
+     * name is provisioned programmatically ({@code CREATE TABLE IF NOT EXISTS}),
+     * so several independently-partitioned queues (e.g. one
+     * {@link PersistentEventQueue} per named queue) can share the same engine
+     * without colliding on one table.
+     *
+     * @param dataSource   the database holding the table; never {@code null}
+     * @param deliverer    receives each event after commit; never {@code null}
+     * @param eventTypes   the serializable event classes this outbox carries
+     * @param pollInterval how long the poller waits when idle; never {@code null}
+     * @param retention    how long processed rows are kept before purging;
+     *                     never {@code null}
+     * @param maxAttempts  delivery attempts before dead-lettering; must be &ge; 1
+     * @param tableName    the backing table name; never {@code null}
+     */
+    Outbox(DataSource dataSource, Consumer<Object> deliverer,
+           List<Class<?>> eventTypes, Duration pollInterval, Duration retention,
+           int maxAttempts, String tableName) {
+        this.tableName    = Objects.requireNonNull(tableName, "tableName");
         this.dataSource   = Objects.requireNonNull(dataSource, "dataSource");
         this.deliverer    = Objects.requireNonNull(deliverer, "deliverer");
         this.pollInterval = Objects.requireNonNull(pollInterval, "pollInterval");
@@ -115,12 +143,41 @@ public final class Outbox implements AutoCloseable {
         var allowed = new ArrayList<Class<?>>(eventTypes);
         this.codec = Codec.java(Serializable.class, allowed.toArray(Class<?>[]::new));
 
-        try {
-            SchemaManager.apply(dataSource, SCHEMA_LOCATION);
-        } catch (ShazoException e) {
-            throw new IllegalStateException("Failed to apply backbone outbox schema", e);
+        if (DEFAULT_TABLE.equals(tableName)) {
+            try {
+                SchemaManager.apply(dataSource, SCHEMA_LOCATION);
+            } catch (ShazoException e) {
+                throw new IllegalStateException("Failed to apply backbone outbox schema", e);
+            }
+        } else {
+            createTable();
         }
-        this.worker = Thread.ofVirtual().name("backbone-outbox-poller").start(this::pollLoop);
+        this.worker = Thread.ofVirtual()
+            .name("backbone-outbox-poller-" + tableName).start(this::pollLoop);
+    }
+
+    /**
+     * Provisions a non-default outbox table (fully formed, including the
+     * dead-letter columns) on first use. Idempotent via {@code IF NOT EXISTS}.
+     */
+    private void createTable() {
+        try (var conn = dataSource.getConnection();
+             var st = conn.createStatement()) {
+            st.execute("CREATE TABLE IF NOT EXISTS " + tableName + " ("
+                + "id           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, "
+                + "event_type   VARCHAR(500) NOT NULL, "
+                + "payload      BYTEA        NOT NULL, "
+                + "created_at   TIMESTAMP    DEFAULT CURRENT_TIMESTAMP, "
+                + "processed_at TIMESTAMP    NULL, "
+                + "status       VARCHAR(16)  DEFAULT 'PENDING' NOT NULL, "
+                + "attempts     INT          DEFAULT 0 NOT NULL, "
+                + "last_error   VARCHAR(2000), "
+                + "failed_at    TIMESTAMP    NULL)");
+            st.execute("CREATE INDEX IF NOT EXISTS idx_" + tableName + "_status"
+                + " ON " + tableName + " (status, id)");
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to create outbox table " + tableName, e);
+        }
     }
 
     /**
@@ -137,7 +194,7 @@ public final class Outbox implements AutoCloseable {
             throws ShazoException, SQLException {
         if (events.isEmpty()) return;
         try (var ps = txConn.prepareStatement(
-                "INSERT INTO backbone_outbox (event_type, payload) VALUES (?, ?)")) {
+                "INSERT INTO " + tableName + " (event_type, payload) VALUES (?, ?)")) {
             for (Object event : events) {
                 if (!(event instanceof Serializable s)) {
                     throw new ShazoException(
@@ -207,7 +264,7 @@ public final class Outbox implements AutoCloseable {
     public boolean retry(long id) {
         try (var conn = dataSource.getConnection();
              var ps = conn.prepareStatement(
-                 "UPDATE backbone_outbox SET status = 'PENDING', attempts = 0,"
+                 "UPDATE " + tableName + " SET status = 'PENDING', attempts = 0,"
                  + " last_error = NULL, failed_at = NULL WHERE id = ? AND status = 'DEAD'")) {
             ps.setLong(1, id);
             boolean requeued = ps.executeUpdate() > 0;
@@ -227,7 +284,7 @@ public final class Outbox implements AutoCloseable {
      */
     public boolean discard(long id) {
         try (var conn = dataSource.getConnection();
-             var ps = conn.prepareStatement("DELETE FROM backbone_outbox WHERE id = ?")) {
+             var ps = conn.prepareStatement("DELETE FROM " + tableName + " WHERE id = ?")) {
             ps.setLong(1, id);
             return ps.executeUpdate() > 0;
         } catch (SQLException e) {
@@ -246,7 +303,7 @@ public final class Outbox implements AutoCloseable {
     private long count(String status) {
         try (var conn = dataSource.getConnection();
              var ps = conn.prepareStatement(
-                 "SELECT COUNT(*) FROM backbone_outbox WHERE status = ?")) {
+                 "SELECT COUNT(*) FROM " + tableName + " WHERE status = ?")) {
             ps.setString(1, status);
             try (var rs = ps.executeQuery()) {
                 return rs.next() ? rs.getLong(1) : 0L;
@@ -263,7 +320,7 @@ public final class Outbox implements AutoCloseable {
         try (var conn = dataSource.getConnection();
              var ps = conn.prepareStatement(
                  "SELECT id, event_type, created_at, attempts, status, last_error"
-                 + " FROM backbone_outbox WHERE status = ? ORDER BY id LIMIT ?")) {
+                 + " FROM " + tableName + " WHERE status = ? ORDER BY id LIMIT ?")) {
             ps.setString(1, status);
             ps.setInt(2, limit);
             try (var rs = ps.executeQuery()) {
@@ -347,7 +404,7 @@ public final class Outbox implements AutoCloseable {
         var rows = new ArrayList<Pending>(BATCH_SIZE);
         try (var conn = dataSource.getConnection();
              var ps = conn.prepareStatement(
-                 "SELECT id, event_type, payload, attempts FROM backbone_outbox"
+                 "SELECT id, event_type, payload, attempts FROM " + tableName
                  + " WHERE status = 'PENDING' ORDER BY id LIMIT " + BATCH_SIZE)) {
             try (var rs = ps.executeQuery()) {
                 while (rs.next()) {
@@ -361,7 +418,7 @@ public final class Outbox implements AutoCloseable {
     private void markProcessed(long id) throws SQLException {
         try (var conn = dataSource.getConnection();
              var ps = conn.prepareStatement(
-                 "UPDATE backbone_outbox SET status = 'PROCESSED', processed_at = ?"
+                 "UPDATE " + tableName + " SET status = 'PROCESSED', processed_at = ?"
                  + " WHERE id = ? AND status = 'PENDING'")) {
             ps.setTimestamp(1, Timestamp.from(Instant.now()));
             ps.setLong(2, id);
@@ -373,7 +430,7 @@ public final class Outbox implements AutoCloseable {
     private void recordFailedAttempt(long id, int attempts, String error) throws SQLException {
         try (var conn = dataSource.getConnection();
              var ps = conn.prepareStatement(
-                 "UPDATE backbone_outbox SET attempts = ?, last_error = ?"
+                 "UPDATE " + tableName + " SET attempts = ?, last_error = ?"
                  + " WHERE id = ? AND status = 'PENDING'")) {
             ps.setInt(1, attempts);
             ps.setString(2, truncate(error));
@@ -386,7 +443,7 @@ public final class Outbox implements AutoCloseable {
     private void deadLetter(long id, int attempts, String error) throws SQLException {
         try (var conn = dataSource.getConnection();
              var ps = conn.prepareStatement(
-                 "UPDATE backbone_outbox SET status = 'DEAD', attempts = ?, last_error = ?,"
+                 "UPDATE " + tableName + " SET status = 'DEAD', attempts = ?, last_error = ?,"
                  + " failed_at = ? WHERE id = ? AND status = 'PENDING'")) {
             ps.setInt(1, attempts);
             ps.setString(2, truncate(error));
@@ -404,7 +461,7 @@ public final class Outbox implements AutoCloseable {
         lastPurge = now;
         try (var conn = dataSource.getConnection();
              var ps = conn.prepareStatement(
-                 "DELETE FROM backbone_outbox WHERE status = 'PROCESSED' AND processed_at < ?")) {
+                 "DELETE FROM " + tableName + " WHERE status = 'PROCESSED' AND processed_at < ?")) {
             ps.setTimestamp(1, Timestamp.from(now.minus(retention)));
             int purged = ps.executeUpdate();
             if (purged > 0) log.debug("Purged {} processed outbox rows", purged);

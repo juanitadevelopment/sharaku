@@ -26,6 +26,7 @@ container, dynamic proxies, or XML.
 | Service unit | `AppService<R>` | A lambda `AppContext -> R` |
 | Identity | `Principal` | Immutable id + roles; `anonymous()` / `system()` |
 | Domain events | `ServiceRunner.subscribe` + `Outbox` | In-process or durable (transactional outbox), delivered after commit |
+| External-event intake | `PersistentEventQueue` | Durable, restart-surviving, idempotent queue for events arriving from outside |
 | Scheduling | `TimerScheduler`, `CronExpression` | Interval, 6-field cron, and one-shot (deadline) jobs as system units of work |
 | Operations | `BackboneConsole` | One surface to view and control the runner and scheduler at run time |
 
@@ -117,6 +118,47 @@ runner.discardEvent(id);              // drop permanently
 ```
 
 `pendingEvents(int)` lists events still awaiting delivery the same way.
+
+## Durable intake queues (external events in)
+
+The outbox is for events a *service* produces. The mirror case — events arriving
+**from outside** the application that must be accepted durably and handed to
+listeners — is a **persistent event queue**: a named, restart-surviving intake
+point that fans one event out to many listeners, each running after the receive
+commits, on a poller thread, in its own transaction.
+
+Declare the queue and its listeners on the builder, then resolve it to receive:
+
+```java
+try (var runner = ServiceRunner.builder()
+        .dataSource(dataSource)
+        .persistentQueue("orders", ExternalOrder.class)          // named durable queue
+        .persistentQueueListener("orders", e -> fulfil(e))       // shared across tenants
+        .persistentQueueListener("orders", e -> audit(e))        // fan-out
+        .build()) {
+
+    PersistentEventQueue<ExternalOrder> orders = runner.persistentQueue("orders");
+
+    // Intake from the outside world. The sender's message id makes it idempotent:
+    // a re-sent event (the sender's own at-least-once) is collapsed at intake.
+    boolean accepted = orders.receive(messageId, new ExternalOrder("o-1"));
+}
+```
+
+- **Idempotent receive** — the dedup marker and the queued row commit atomically,
+  so a duplicate external send is not enqueued twice. `receive` returns `false`
+  for a message id already seen. `publish(event)` is the fire-and-forget form for
+  app-generated events (fresh id, always enqueued).
+- **Separate transaction** — listeners run after the receive commits, on the
+  poller, each in its own unit of work.
+- **At-least-once + triage** — same engine as the outbox: `deadLetterCount()`,
+  `peekDeadLetters(n)`, `retry(id)` (the old queue browser's replay), `discard(id)`.
+- **Per tenant** — with a `tenantRouter`, `runner.persistentQueue("orders", tenant)`
+  gives each tenant its own queue on its own data source (its own
+  `backbone_pq_orders` table), sharing the declared listeners.
+
+This revives the framework's original `PersistentEventQueue` (the durable peer of
+the in-memory `TransientEventQueue`), rebuilt on the modern outbox engine.
 
 ## Multi-tenancy
 
