@@ -1,7 +1,6 @@
-package net.teppan.shazo.jdbc.embedded;
+package net.teppan.shazo.jdbc;
 
 import net.teppan.shazo.ShazoException;
-import net.teppan.shazo.jdbc.SchemaManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -24,7 +23,7 @@ class SchemaManagerTest {
     @BeforeEach
     void setUp() {
         // Fresh in-memory DB per test to avoid cross-test interference
-        dataSource = EmbeddedDataSource.inMemory("schema_test_" + System.nanoTime());
+        dataSource = TestH2.inMemory("schema_test_" + System.nanoTime());
     }
 
     @Test

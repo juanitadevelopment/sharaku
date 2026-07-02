@@ -73,7 +73,8 @@ import java.util.regex.Pattern;
  * <p>Calling {@code apply} multiple times with the same arguments is safe:
  * already-applied, unchanged scripts are skipped.
  *
- * @see net.teppan.shazo.jdbc.embedded.EmbeddedDataSource
+ * <p>Works with any {@link DataSource}; for an H2 one in development or tests
+ * see {@code H2DataSources} in the optional {@code shazo-h2} module.
  */
 public final class SchemaManager {
 

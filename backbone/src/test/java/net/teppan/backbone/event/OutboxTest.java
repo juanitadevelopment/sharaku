@@ -1,6 +1,6 @@
 package net.teppan.backbone.event;
 
-import net.teppan.shazo.jdbc.embedded.EmbeddedDataSource;
+import net.teppan.shazo.jdbc.h2.H2DataSources;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -23,7 +23,7 @@ class OutboxTest {
 
     @BeforeEach
     void setUp() {
-        ds = EmbeddedDataSource.inMemory("outbox_" + System.nanoTime());
+        ds = H2DataSources.inMemory("outbox_" + System.nanoTime());
     }
 
     private void writeCommitted(Outbox outbox, Object event) throws Exception {

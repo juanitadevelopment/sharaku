@@ -2,7 +2,6 @@ package net.teppan.shazo.jdbc;
 
 import net.teppan.shazo.Describer;
 import net.teppan.shazo.ShazoException;
-import net.teppan.shazo.jdbc.embedded.EmbeddedDataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -29,7 +28,7 @@ class RepositoriesTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        ds = EmbeddedDataSource.inMemory("repos_" + DB.incrementAndGet());
+        ds = TestH2.inMemory("repos_" + DB.incrementAndGet());
         try (var conn = ds.getConnection(); var st = conn.createStatement()) {
             st.execute("CREATE TABLE widget (id VARCHAR(36) PRIMARY KEY, name VARCHAR(200))");
             st.execute("CREATE TABLE gadget (id VARCHAR(36) PRIMARY KEY, name VARCHAR(200))");

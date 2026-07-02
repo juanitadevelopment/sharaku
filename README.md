@@ -6,7 +6,8 @@ two artifacts that share one lineage and evolve together:
 
 | Module | Artifact | What it is |
 |--------|----------|------------|
-| [`shazo`](shazo/) | `net.teppan:shazo` | Object-persistence abstraction — one typed `Repository` contract over JDBC, file, shell, and HTTP backends. Usable standalone. |
+| [`shazo`](shazo/) | `net.teppan:shazo` | Object-persistence abstraction — one typed `Repository` contract over JDBC, file, shell, and HTTP backends. Usable standalone; ships no JDBC driver. |
+| [`shazo-h2`](shazo-h2/) | `net.teppan:shazo-h2` | Optional H2 `DataSource` factory (`H2DataSources`: file / in-memory / server). Keeps H2 out of core shazo's dependencies. |
 | [`backbone`](backbone/) | `net.teppan:backbone` | Transactional service + domain-event runtime, built on shazo. Depends on shazo. |
 | [`demo`](demo/) | *(not published)* | Runnable sample (a memo/notes service + an orders showcase) exercising shazo and backbone together. |
 
@@ -25,7 +26,7 @@ two artifacts that share one lineage and evolve together:
 
 ## Getting the artifacts
 
-Both modules are published from this single repository via JitPack, resolvable
+The published modules are resolvable from this single repository via JitPack,
 per tag:
 
 ```kotlin
@@ -33,8 +34,10 @@ repositories {
     maven { url = uri("https://jitpack.io") }
 }
 dependencies {
-    // persistence only
+    // persistence only (no JDBC driver pulled in)
     implementation("com.github.juanitadevelopment.sharaku:shazo:0.2.0")
+    // optional: embedded/file/server H2 DataSource factory (adds H2)
+    implementation("com.github.juanitadevelopment.sharaku:shazo-h2:0.2.0")
     // application runtime (pulls in shazo transitively)
     implementation("com.github.juanitadevelopment.sharaku:backbone:0.2.0")
 }

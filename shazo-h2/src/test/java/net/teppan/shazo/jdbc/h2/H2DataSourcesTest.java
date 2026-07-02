@@ -1,4 +1,4 @@
-package net.teppan.shazo.jdbc.embedded;
+package net.teppan.shazo.jdbc.h2;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -9,13 +9,13 @@ import java.sql.SQLException;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Tests for {@link EmbeddedDataSource}.
+ * Tests for {@link H2DataSources}.
  */
-class EmbeddedDataSourceTest {
+class H2DataSourcesTest {
 
     @Test
     void inMemoryDataSourceAcceptsConnections() throws SQLException {
-        var ds = EmbeddedDataSource.inMemory("ds_test_basic");
+        var ds = H2DataSources.inMemory("ds_test_basic");
         try (var conn = ds.getConnection()) {
             assertThat(conn.isClosed()).isFalse();
         }
@@ -23,7 +23,7 @@ class EmbeddedDataSourceTest {
 
     @Test
     void inMemoryDataSourceExecutesDdl() throws SQLException {
-        var ds = EmbeddedDataSource.inMemory("ds_test_ddl");
+        var ds = H2DataSources.inMemory("ds_test_ddl");
         try (var conn = ds.getConnection();
              var stmt = conn.createStatement()) {
             stmt.execute("CREATE TABLE t (id INT PRIMARY KEY)");
@@ -38,7 +38,7 @@ class EmbeddedDataSourceTest {
     @Test
     void fileDataSourcePersistsBetweenConnections(@TempDir Path dir) throws SQLException {
         var path = dir.resolve("testdb").toString();
-        var ds   = EmbeddedDataSource.file(path);
+        var ds   = H2DataSources.file(path);
 
         try (var conn = ds.getConnection();
              var stmt = conn.createStatement()) {
@@ -47,7 +47,7 @@ class EmbeddedDataSourceTest {
         }
 
         // Re-open via a new DataSource pointing to the same file
-        var ds2 = EmbeddedDataSource.file(path);
+        var ds2 = H2DataSources.file(path);
         try (var conn = ds2.getConnection();
              var stmt = conn.createStatement();
              var rs   = stmt.executeQuery("SELECT v FROM val")) {
@@ -58,7 +58,7 @@ class EmbeddedDataSourceTest {
 
     @Test
     void postgresCompatModeIsEnabled() throws SQLException {
-        var ds = EmbeddedDataSource.inMemory("ds_test_pg_compat");
+        var ds = H2DataSources.inMemory("ds_test_pg_compat");
         try (var conn = ds.getConnection();
              var stmt = conn.createStatement()) {
             // ILIKE is a PostgreSQL extension; works in H2 PostgreSQL mode

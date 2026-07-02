@@ -6,4 +6,4 @@ plugins {
 
 rootProject.name = "sharaku"
 
-include(":shazo", ":backbone", ":demo")
+include(":shazo", ":shazo-h2", ":backbone", ":demo")

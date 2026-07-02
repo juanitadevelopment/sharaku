@@ -1,6 +1,6 @@
 package net.teppan.backbone.event;
 
-import net.teppan.shazo.jdbc.embedded.EmbeddedDataSource;
+import net.teppan.shazo.jdbc.h2.H2DataSources;
 import org.junit.jupiter.api.Test;
 
 import javax.sql.DataSource;
@@ -136,7 +136,7 @@ class DurableInboxPatternTest {
     // ── Tests ─────────────────────────────────────────────────────────────────
 
     private DataSource freshDs() {
-        return EmbeddedDataSource.inMemory("inbox_" + System.nanoTime());
+        return H2DataSources.inMemory("inbox_" + System.nanoTime());
     }
 
     @Test

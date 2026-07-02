@@ -6,7 +6,7 @@ import net.teppan.shazo.ShazoException;
 import net.teppan.shazo.file.FileRepository;
 import net.teppan.shazo.jdbc.JdbcRepository;
 import net.teppan.shazo.jdbc.SchemaManager;
-import net.teppan.shazo.jdbc.embedded.EmbeddedDataSource;
+import net.teppan.shazo.jdbc.h2.H2DataSources;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -192,7 +192,7 @@ class NoteRepositoryTest {
 
         @Override
         Repository<Note> createRepo() throws ShazoException {
-            var ds = EmbeddedDataSource.inMemory("note_test_" + DB_COUNTER.incrementAndGet());
+            var ds = H2DataSources.inMemory("note_test_" + DB_COUNTER.incrementAndGet());
             SchemaManager.apply(ds, "net/teppan/demo/memo/schema/");
             return new JdbcRepository<>(ds, new JdbcNoteDescriber());
         }

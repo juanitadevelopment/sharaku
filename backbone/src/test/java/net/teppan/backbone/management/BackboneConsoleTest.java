@@ -4,7 +4,7 @@ import net.teppan.backbone.Principal;
 import net.teppan.backbone.ServiceRunner;
 import net.teppan.backbone.timer.TimerScheduler;
 import net.teppan.backbone.timer.TimerScheduler.JobStatus;
-import net.teppan.shazo.jdbc.embedded.EmbeddedDataSource;
+import net.teppan.shazo.jdbc.h2.H2DataSources;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -27,7 +27,7 @@ class BackboneConsoleTest {
 
     @BeforeEach
     void setUp() {
-        ds = EmbeddedDataSource.inMemory("console_" + System.nanoTime());
+        ds = H2DataSources.inMemory("console_" + System.nanoTime());
     }
 
     @AfterEach

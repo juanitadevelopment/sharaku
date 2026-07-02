@@ -11,6 +11,7 @@ plugins {
 
 dependencies {
     implementation(project(":shazo"))
+    implementation(project(":shazo-h2"))   // MemoApp/OrderShowcase use H2DataSources
     implementation(project(":backbone"))
 
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.1")

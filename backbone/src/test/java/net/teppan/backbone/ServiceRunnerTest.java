@@ -4,7 +4,7 @@ import net.teppan.shazo.Describer;
 import net.teppan.shazo.jdbc.JdbcRepository;
 import net.teppan.shazo.jdbc.Repositories;
 import net.teppan.shazo.jdbc.SqlCommand;
-import net.teppan.shazo.jdbc.embedded.EmbeddedDataSource;
+import net.teppan.shazo.jdbc.h2.H2DataSources;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -32,7 +32,7 @@ class ServiceRunnerTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        ds = EmbeddedDataSource.inMemory("runner_" + System.nanoTime());
+        ds = H2DataSources.inMemory("runner_" + System.nanoTime());
         try (var conn = ds.getConnection(); var st = conn.createStatement()) {
             st.execute("CREATE TABLE item (id VARCHAR(36) PRIMARY KEY, name VARCHAR(200))");
         }

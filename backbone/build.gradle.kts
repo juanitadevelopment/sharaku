@@ -11,7 +11,7 @@ dependencies {
 
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.1")
     testImplementation("org.assertj:assertj-core:3.25.1")
-    testImplementation("com.h2database:h2:2.2.224")
+    testImplementation(project(":shazo-h2"))   // H2DataSources for tests (brings H2 transitively)
     testRuntimeOnly("org.slf4j:slf4j-simple:2.0.11")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }

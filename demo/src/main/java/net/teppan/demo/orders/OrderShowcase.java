@@ -9,7 +9,7 @@ import net.teppan.shazo.ShazoException;
 import net.teppan.shazo.jdbc.Repositories;
 import net.teppan.shazo.jdbc.SchemaManager;
 import net.teppan.shazo.jdbc.SqlCommand;
-import net.teppan.shazo.jdbc.embedded.EmbeddedDataSource;
+import net.teppan.shazo.jdbc.h2.H2DataSources;
 
 import javax.sql.DataSource;
 import java.util.List;
@@ -169,7 +169,7 @@ public final class OrderShowcase implements AutoCloseable {
      * @throws Exception if the scenario fails
      */
     public static void main(String[] args) throws Exception {
-        DataSource ds = EmbeddedDataSource.inMemory("orders-showcase");
+        DataSource ds = H2DataSources.inMemory("orders-showcase");
         try (var showcase = new OrderShowcase(ds)) {
             String a = showcase.placeOrder("Acme Corp");
             String b = showcase.placeOrder("Globex");

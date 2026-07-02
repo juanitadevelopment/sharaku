@@ -5,7 +5,7 @@ import net.teppan.shazo.jdbc.Repositories;
 import net.teppan.backbone.timer.TimerScheduler;
 import net.teppan.shazo.jdbc.SessionInitDataSource;
 import net.teppan.shazo.jdbc.SqlCommand;
-import net.teppan.shazo.jdbc.embedded.EmbeddedDataSource;
+import net.teppan.shazo.jdbc.h2.H2DataSources;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -37,7 +37,7 @@ class MultiTenantTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        shared = EmbeddedDataSource.inMemory("mt_" + System.nanoTime());
+        shared = H2DataSources.inMemory("mt_" + System.nanoTime());
         try (var conn = shared.getConnection(); var st = conn.createStatement()) {
             for (var t : List.of("acme", "globex")) {
                 st.execute("CREATE SCHEMA IF NOT EXISTS " + t);

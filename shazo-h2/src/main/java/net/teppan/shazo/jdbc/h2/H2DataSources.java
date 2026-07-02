@@ -1,16 +1,24 @@
-package net.teppan.shazo.jdbc.embedded;
+package net.teppan.shazo.jdbc.h2;
 
 import org.h2.jdbcx.JdbcConnectionPool;
 
 import javax.sql.DataSource;
 
 /**
- * Factory for embedded H2 {@link DataSource} instances.
+ * Factory for H2 {@link DataSource} instances — file-based, in-memory, or
+ * connected to a running H2 server.
+ *
+ * <p>Lives in the separate {@code shazo-h2} artifact so that core {@code shazo}
+ * carries no H2 dependency: only applications that opt into this convenience
+ * pull H2 onto their classpath. Callers that supply their own
+ * {@link DataSource} (HikariCP over PostgreSQL, etc.) need neither this class
+ * nor {@code shazo-h2}.
  *
  * <p>All modes use H2's PostgreSQL compatibility settings by default
  * ({@code MODE=PostgreSQL}, {@code DATABASE_TO_LOWER=TRUE},
- * {@code DEFAULT_NULL_ORDERING=HIGH}), so SQL written against an embedded
- * database will largely work unchanged against a PostgreSQL production server.
+ * {@code DEFAULT_NULL_ORDERING=HIGH}), so SQL written against an H2 database
+ * (e.g. in development or tests) will largely work unchanged against a
+ * PostgreSQL production server.
  *
  * <p>The returned {@code DataSource} is backed by H2's built-in connection
  * pool ({@link JdbcConnectionPool}). For higher-throughput workloads, wrap
@@ -19,19 +27,19 @@ import javax.sql.DataSource;
  * <h2>Quick start</h2>
  * <pre>{@code
  * // Persistent, file-based database
- * DataSource ds = EmbeddedDataSource.file("./data/myapp");
+ * DataSource ds = H2DataSources.file("./data/myapp");
  *
  * // In-memory database (tests)
- * DataSource ds = EmbeddedDataSource.inMemory("testdb");
+ * DataSource ds = H2DataSources.inMemory("testdb");
  *
  * // Connect to a running H2 server
- * DataSource ds = EmbeddedDataSource.server("localhost", 9092, "myapp");
+ * DataSource ds = H2DataSources.server("localhost", 9092, "myapp");
  * }</pre>
  *
  * @see net.teppan.shazo.jdbc.SchemaManager
  * @see net.teppan.shazo.jdbc.JdbcRepository
  */
-public final class EmbeddedDataSource {
+public final class H2DataSources {
 
     /**
      * PostgreSQL-compatible H2 options applied to every URL.
@@ -96,5 +104,5 @@ public final class EmbeddedDataSource {
         return JdbcConnectionPool.create(url, "sa", "");
     }
 
-    private EmbeddedDataSource() {}
+    private H2DataSources() {}
 }

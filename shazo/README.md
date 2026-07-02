@@ -78,8 +78,9 @@ A `Describer` is parameterized by its command type `C`, so a
 ```java
 record Person(String id, String name, int age) {}
 
-// 1. A data source (embedded H2 here; any javax.sql.DataSource works)
-DataSource ds = EmbeddedDataSource.inMemory("demo");
+// 1. A data source (embedded H2 here, from the optional shazo-h2 module;
+//    any javax.sql.DataSource works — HikariCP over PostgreSQL, etc.)
+DataSource ds = H2DataSources.inMemory("demo");
 
 // 2. (optional) run versioned migrations from the classpath
 SchemaManager.apply(ds, "db/migration/");   // V001__*.sql, V002__*.sql, ...
@@ -253,8 +254,10 @@ PostgreSQL dollar-quoted blocks.
 SchemaManager.apply(dataSource, "net/teppan/myapp/schema/");
 ```
 
-`EmbeddedDataSource` provides H2 data sources (file, in-memory, server) with
-PostgreSQL-compatibility options preset.
+`H2DataSources` (in the optional **`shazo-h2`** module) provides H2 data sources
+(file, in-memory, server) with PostgreSQL-compatibility options preset. Core
+`shazo` ships no JDBC driver — add `shazo-h2` only if you want this convenience;
+otherwise supply your own `DataSource`.
 
 ## Tenant-scoped connections
 

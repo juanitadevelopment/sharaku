@@ -7,7 +7,7 @@ import net.teppan.shazo.ShazoException;
 import net.teppan.shazo.file.FileRepository;
 import net.teppan.shazo.jdbc.JdbcRepository;
 import net.teppan.shazo.jdbc.SchemaManager;
-import net.teppan.shazo.jdbc.embedded.EmbeddedDataSource;
+import net.teppan.shazo.jdbc.h2.H2DataSources;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -53,7 +53,7 @@ public final class MemoApp {
 
         switch (storage) {
             case "jdbc" -> {
-                var ds = EmbeddedDataSource.file(opts.getOrDefault("db-path", "./memo-db"));
+                var ds = H2DataSources.file(opts.getOrDefault("db-path", "./memo-db"));
                 SchemaManager.apply(ds, "net/teppan/demo/memo/schema/");
                 memoRepo = new JdbcRepository<>(ds, new JdbcMemoDescriber());
                 noteRepo = new JdbcRepository<>(ds, new JdbcNoteDescriber());
