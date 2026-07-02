@@ -8,6 +8,7 @@ two artifacts that share one lineage and evolve together:
 |--------|----------|------------|
 | [`shazo`](shazo/) | `net.teppan:shazo` | Object-persistence abstraction — one typed `Repository` contract over JDBC, file, shell, and HTTP backends. Usable standalone. |
 | [`backbone`](backbone/) | `net.teppan:backbone` | Transactional service + domain-event runtime, built on shazo. Depends on shazo. |
+| [`demo`](demo/) | *(not published)* | Runnable sample (a memo/notes service + an orders showcase) exercising shazo and backbone together. |
 
 `backbone` builds on `shazo` (one-way dependency); `shazo` has no dependency on
 `backbone` and can be used on its own.

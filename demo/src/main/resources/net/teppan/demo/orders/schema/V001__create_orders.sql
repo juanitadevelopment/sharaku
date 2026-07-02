@@ -1,0 +1,12 @@
+CREATE TABLE orders (
+    id       VARCHAR(36)  PRIMARY KEY,
+    customer VARCHAR(200) NOT NULL,
+    status   VARCHAR(40)  NOT NULL
+);
+
+CREATE TABLE order_audit (
+    id       BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    order_id VARCHAR(36) NOT NULL,
+    action   VARCHAR(80) NOT NULL,
+    at       TIMESTAMP   DEFAULT CURRENT_TIMESTAMP
+);
