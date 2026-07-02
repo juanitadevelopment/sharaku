@@ -45,7 +45,7 @@ import java.util.List;
  * @see ServiceRunner
  * @see AppContext#afterCommit(Runnable)
  */
-public class PostCommitException extends AppServiceException {
+public final class PostCommitException extends AppServiceException {
 
     private final transient List<Throwable> failures;
 
