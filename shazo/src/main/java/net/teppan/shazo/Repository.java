@@ -38,6 +38,12 @@ import java.util.Optional;
  *   <tr><td>{@code gather}</td>
  *       <td>Fetches all matching entities, gathered into typed objects</td>
  *       <td>{@code List<T>}</td></tr>
+ *   <tr><td>{@code catalog(query, page)}</td>
+ *       <td>Fetches one {@link Page} of the matching rows</td>
+ *       <td>{@code RawResult}</td></tr>
+ *   <tr><td>{@code gather(query, page)}</td>
+ *       <td>Fetches one {@link Page} of the matching entities, with a has-more flag</td>
+ *       <td>{@code Gathered<T>}</td></tr>
  * </tbody>
  * </table>
  *
@@ -122,14 +128,73 @@ public interface Repository<T> {
     RawResult catalog(T query) throws ShazoException;
 
     /**
+     * Returns the given {@code page} of the rows matching {@code query} as a raw
+     * table: skip {@code page.offset()} rows, return at most {@code page.limit()}.
+     *
+     * <p>This default fetches the full catalog and slices it, which is correct
+     * everywhere but does not bound the fetch; storage-backed implementations
+     * override it to fetch only what the page needs. Offset paging assumes the
+     * catalog query has a stable order (e.g. an {@code ORDER BY}).
+     *
+     * @param query an object that serves as filter criteria
+     * @param page  the window to return; never {@code null}
+     * @return the page's rows in table form; never {@code null}
+     * @throws ShazoException if the storage operation fails
+     */
+    default RawResult catalog(T query, Page page) throws ShazoException {
+        java.util.Objects.requireNonNull(page, "page");
+        var rows = catalog(query).rows();
+        int from = Math.min(page.offset(), rows.size());
+        int to   = Math.min(from + page.limit(), rows.size());
+        return RawResult.of(rows.subList(from, to));
+    }
+
+    /**
      * Returns all entities matching {@code query} as an immutable list, by
      * cataloging the matching keys and retrieving each into a typed object (so
      * the describer must declare {@code key(...)}). Returns an empty list when no
      * matches exist.
+     *
+     * <p>For match sets that may be large, prefer {@link #gather(Object, Page)},
+     * which bounds both the memory and the per-key retrieves.
      *
      * @param query an object that serves as filter criteria
      * @return an immutable list of matching entities; never {@code null}
      * @throws ShazoException if the storage operation fails
      */
     List<T> gather(T query) throws ShazoException;
+
+    /**
+     * Returns the given {@code page} of the entities matching {@code query},
+     * plus whether more matches exist beyond it — the bounded companion of
+     * {@link #gather(Object)}: only the page's keys are retrieved into objects,
+     * so memory and per-key round trips are capped at {@code page.limit()}.
+     *
+     * <pre>{@code
+     * var page = Page.of(50);
+     * var slice = orders.gather(query, page);
+     * while (slice.hasMore()) {
+     *     process(slice);
+     *     slice = orders.gather(query, page = page.next());
+     * }
+     * process(slice);
+     * }</pre>
+     *
+     * <p>This default fetches the full result and slices it, which is correct
+     * everywhere but does not bound the fetch; storage-backed implementations
+     * override it to fetch only what the page needs. Offset paging assumes the
+     * catalog query has a stable order (e.g. an {@code ORDER BY}).
+     *
+     * @param query an object that serves as filter criteria
+     * @param page  the window to return; never {@code null}
+     * @return the page's entities and a has-more flag; never {@code null}
+     * @throws ShazoException if the storage operation fails
+     */
+    default Gathered<T> gather(T query, Page page) throws ShazoException {
+        java.util.Objects.requireNonNull(page, "page");
+        var all = gather(query);
+        int from = Math.min(page.offset(), all.size());
+        int to   = Math.min(from + page.limit(), all.size());
+        return new Gathered<>(all.subList(from, to), to < all.size());
+    }
 }

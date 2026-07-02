@@ -146,8 +146,19 @@ public final class CacheRepository<T> implements Repository<T>, AutoCloseable {
     }
 
     @Override
+    public RawResult catalog(T query, net.teppan.shazo.Page page) throws ShazoException {
+        return delegate.catalog(query, page);   // pass through so the backend's paging applies
+    }
+
+    @Override
     public List<T> gather(T query) throws ShazoException {
         return delegate.gather(query);
+    }
+
+    @Override
+    public net.teppan.shazo.Gathered<T> gather(T query, net.teppan.shazo.Page page)
+            throws ShazoException {
+        return delegate.gather(query, page);    // pass through so the backend's paging applies
     }
 
     // ── Cache management ─────────────────────────────────────────────────────

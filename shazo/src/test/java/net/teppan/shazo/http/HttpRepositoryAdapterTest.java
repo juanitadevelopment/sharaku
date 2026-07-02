@@ -62,11 +62,17 @@ class HttpRepositoryAdapterTest {
             return byName.getFirst();
         }
 
+        private List<Person> sortedById() {
+            return data.values().stream()
+                .sorted(Comparator.comparing(Person::id)).toList();
+        }
+
         @Override
         public RawResult catalog(Person q) {
             // Emit a mix of scalar types to exercise the typed row codec.
+            // Sorted so paged windows are deterministic.
             var rows = new ArrayList<Map<String, Object>>();
-            for (Person p : data.values()) {
+            for (Person p : sortedById()) {
                 var row = new LinkedHashMap<String, Object>();
                 row.put("id", p.id());
                 row.put("name", p.name());
@@ -82,7 +88,7 @@ class HttpRepositoryAdapterTest {
 
         @Override
         public List<Person> gather(Person q) {
-            return List.copyOf(data.values());
+            return sortedById();
         }
     }
 
@@ -209,6 +215,36 @@ class HttpRepositoryAdapterTest {
     @Test
     void catalogReturnsEmptyWhenNoEntities() throws ShazoException {
         assertThat(adapter.gather(new Person(null, null))).isEmpty();
+    }
+
+    // ── Paged operations over the wire ───────────────────────────────────────
+
+    @Test
+    void pagedGatherRoundTripsWindowAndHasMore() throws ShazoException {
+        for (int i = 1; i <= 5; i++) {
+            adapter.store(new Person("p" + i, "Name" + i));
+        }
+
+        var first = adapter.gather(new Person(null, null), net.teppan.shazo.Page.of(2));
+        assertThat(first.items()).containsExactly(
+            new Person("p1", "Name1"), new Person("p2", "Name2"));
+        assertThat(first.hasMore()).isTrue();
+
+        var last = adapter.gather(new Person(null, null), new net.teppan.shazo.Page(4, 2));
+        assertThat(last.items()).containsExactly(new Person("p5", "Name5"));
+        assertThat(last.hasMore()).isFalse();
+    }
+
+    @Test
+    void pagedCatalogRoundTripsOnlyTheWindowRows() throws ShazoException {
+        for (int i = 1; i <= 5; i++) {
+            adapter.store(new Person("p" + i, "Name" + i));
+        }
+
+        RawResult page = adapter.catalog(new Person(null, null), new net.teppan.shazo.Page(1, 2));
+        assertThat(page.size()).isEqualTo(2);
+        assertThat(page.rows().get(0).get("id")).isEqualTo("p2");
+        assertThat(page.rows().get(1).get("id")).isEqualTo("p3");
     }
 
     // ── Codec.java() ─────────────────────────────────────────────────────────

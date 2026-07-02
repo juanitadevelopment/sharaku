@@ -1,7 +1,9 @@
 package net.teppan.shazo.http;
 
+import net.teppan.shazo.Gathered;
 import net.teppan.shazo.MultipleFoundException;
 import net.teppan.shazo.NotFoundException;
+import net.teppan.shazo.Page;
 import net.teppan.shazo.RawResult;
 import net.teppan.shazo.Repository;
 import net.teppan.shazo.ShazoException;
@@ -176,6 +178,24 @@ public final class HttpRepositoryAdapter<T> implements Repository<T>, AutoClosea
         }
     }
 
+    /**
+     * Catalogs one page of the matching rows. The window is executed on the
+     * server, so only the page's rows cross the wire.
+     */
+    @Override
+    public RawResult catalog(T query, Page page) throws ShazoException {
+        Objects.requireNonNull(page, "page");
+        log.debug("catalog(page) → {}", endpoint);
+        byte[] resp = post(buildPagedRequest(Protocol.OP_CATALOG_PAGED, query, page));
+        try {
+            var in = new DataInputStream(new ByteArrayInputStream(resp));
+            checkException(in.readByte(), in);
+            return RowCodec.read(in);
+        } catch (IOException e) {
+            throw new ShazoException("Failed to parse paged catalog response", e);
+        }
+    }
+
     @Override
     public List<T> gather(T query) throws ShazoException {
         log.debug("gather → {}", endpoint);
@@ -198,6 +218,34 @@ public final class HttpRepositoryAdapter<T> implements Repository<T>, AutoClosea
         }
     }
 
+    /**
+     * Gathers one page of the matching entities. The window (and the has-more
+     * probe) is executed on the server, so only the page's entities cross the
+     * wire.
+     */
+    @Override
+    public Gathered<T> gather(T query, Page page) throws ShazoException {
+        Objects.requireNonNull(page, "page");
+        log.debug("gather(page) → {}", endpoint);
+        byte[] resp = post(buildPagedRequest(Protocol.OP_GATHER_PAGED, query, page));
+        try {
+            var in = new DataInputStream(new ByteArrayInputStream(resp));
+            byte status = in.readByte();
+            checkException(status, in);
+            boolean hasMore = in.readByte() != 0;
+            int count       = in.readInt();
+            var results = new ArrayList<T>(count);
+            for (int i = 0; i < count; i++) {
+                int    len   = in.readInt();
+                byte[] bytes = in.readNBytes(len);
+                results.add(codec.decode(bytes));
+            }
+            return new Gathered<>(results, hasMore);
+        } catch (IOException e) {
+            throw new ShazoException("Failed to parse paged gather response", e);
+        }
+    }
+
     // ── AutoCloseable ─────────────────────────────────────────────────────────
 
     /**
@@ -216,6 +264,20 @@ public final class HttpRepositoryAdapter<T> implements Repository<T>, AutoClosea
         var baos = new ByteArrayOutputStream(1 + payload.length);
         baos.write(op);
         baos.write(payload, 0, payload.length);
+        return baos.toByteArray();
+    }
+
+    private byte[] buildPagedRequest(byte op, T entity, Page page) throws ShazoException {
+        byte[] payload = codec.encode(entity);
+        var baos = new ByteArrayOutputStream(9 + payload.length);
+        try (var out = new DataOutputStream(baos)) {
+            out.writeByte(op);
+            out.writeInt(page.offset());
+            out.writeInt(page.limit());
+            out.write(payload);
+        } catch (IOException e) {
+            throw new ShazoException("Failed to build paged request", e);
+        }
         return baos.toByteArray();
     }
 

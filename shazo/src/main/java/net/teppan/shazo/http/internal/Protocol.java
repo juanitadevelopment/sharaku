@@ -20,6 +20,10 @@ public final class Protocol {
     public static final byte OP_FIND     = 6;
     /** Catalog the matching rows as a raw table ({@code RawResult}). */
     public static final byte OP_CATALOG  = 7;
+    /** Gather one page of the matching entities (request carries offset+limit). */
+    public static final byte OP_GATHER_PAGED  = 8;
+    /** Catalog one page of the matching rows (request carries offset+limit). */
+    public static final byte OP_CATALOG_PAGED = 9;
 
     /** The operation completed without error. */
     public static final byte STATUS_OK             = 0;

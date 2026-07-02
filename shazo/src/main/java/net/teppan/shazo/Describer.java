@@ -95,6 +95,30 @@ public interface Describer<T, C extends Command> {
     List<C> catalogCommands(T query);
 
     /**
+     * Returns commands that fetch only the given {@code page} of the matches —
+     * the paged variant of {@link #catalogCommands(Object)} — or {@code null}
+     * if this describer has no dedicated paged query.
+     *
+     * <p>Optional efficiency hook: when present (via
+     * {@link Builder#catalogPaged}), the repository pushes the window down to
+     * the storage (e.g. {@code LIMIT ? OFFSET ?} in the dialect of your choice)
+     * instead of fetching from the front and discarding. When absent, paged
+     * operations still work — the repository bounds the fetch itself — so
+     * implementing this is never required for correctness.
+     *
+     * <p>The commands must apply <em>both</em> {@code page.offset()} and
+     * {@code page.limit()}; the repository may probe with a limit one larger
+     * than the caller's to detect whether more matches exist.
+     *
+     * @param query the query object; may act as filter criteria
+     * @param page  the window to fetch; never {@code null}
+     * @return commands to execute, or {@code null} when unsupported
+     */
+    default List<C> catalogCommands(T query, Page page) {
+        return null;
+    }
+
+    /**
      * Returns the {@link Infuser} that assembles one entity (root plus any
      * children) from the per-command {@link Results} of a {@code retrieve}.
      *
@@ -164,6 +188,7 @@ public interface Describer<T, C extends Command> {
         private Function<T, List<C>> deleteFn;
         private Function<T, List<C>> retrieveFn;
         private Function<T, List<C>> catalogFn;
+        private java.util.function.BiFunction<T, Page, List<C>> catalogPagedFn;
         private Infuser<T> infuser;
         private Function<java.util.Map<String, Object>, T> key;
         private Verifier verifier = Verifier.nonEmpty();
@@ -226,6 +251,31 @@ public interface Describer<T, C extends Command> {
         }
 
         /**
+         * Sets the optional paged-catalog generator, letting
+         * {@link Repository#gather(Object, Page)} and
+         * {@link Repository#catalog(Object, Page)} push the window down to the
+         * storage instead of fetching from the front and discarding. Map
+         * {@code page.offset()} and {@code page.limit()} into your query in
+         * whatever dialect the backend speaks, e.g.
+         *
+         * <pre>{@code
+         * .catalogPaged((q, page) -> List.of(SqlCommand.of(
+         *     "SELECT id FROM orders WHERE customer = ? ORDER BY id LIMIT ? OFFSET ?",
+         *     q.customer(), page.limit(), page.offset())))
+         * }</pre>
+         *
+         * <p>Never required: without it, paged operations fall back to a
+         * repository-bounded fetch of the leading {@code offset + limit} rows.
+         *
+         * @param fn the paged generator; never {@code null}
+         * @return this builder
+         */
+        public Builder<T, C> catalogPaged(java.util.function.BiFunction<T, Page, List<C>> fn) {
+            this.catalogPagedFn = Objects.requireNonNull(fn, "catalogPaged");
+            return this;
+        }
+
+        /**
          * Sets the {@link Infuser} for single-entity retrieval.
          *
          * @param infuser the infuser; never {@code null}
@@ -278,7 +328,7 @@ public interface Describer<T, C extends Command> {
 
             // capture finals for the anonymous class
             var c = containsFn; var s = storeFn; var d = deleteFn;
-            var r = retrieveFn; var g = catalogFn;
+            var r = retrieveFn; var g = catalogFn; var gp = catalogPagedFn;
             var inf = infuser; var k = key; var ver = verifier;
 
             return new Describer<>() {
@@ -287,6 +337,9 @@ public interface Describer<T, C extends Command> {
                 @Override public List<C> deleteCommands(T e)   { return d.apply(e); }
                 @Override public List<C> retrieveCommands(T q) { return r.apply(q); }
                 @Override public List<C> catalogCommands(T q)  { return g.apply(q); }
+                @Override public List<C> catalogCommands(T q, Page p) {
+                    return gp == null ? null : gp.apply(q, p);
+                }
                 @Override public Infuser<T>    infuser()       { return inf; }
                 @Override public java.util.function.Function<java.util.Map<String, Object>, T> key() { return k; }
                 @Override public Verifier      verifier()      { return ver; }

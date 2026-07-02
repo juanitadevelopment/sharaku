@@ -30,4 +30,9 @@ final class BoundJdbcRepository<T> extends AbstractRepository<T, SqlCommand> {
     protected RawResult execute(List<SqlCommand> commands) throws ShazoException {
         return JdbcRepository.executeOnConnection(connection, commands);
     }
+
+    @Override
+    protected RawResult execute(List<SqlCommand> commands, int maxRows) throws ShazoException {
+        return JdbcRepository.executeOnConnection(connection, commands, maxRows);
+    }
 }

@@ -30,6 +30,9 @@ public interface Repository<T> {
     T            find(T query)      throws ShazoException;  // strict: the unique match, or NotFound / MultipleFound
     List<T>      gather(T query)    throws ShazoException;  // the matching entities
     RawResult    catalog(T query)   throws ShazoException;  // the matching rows, as a table
+
+    Gathered<T>  gather(T query, Page page)  throws ShazoException;  // one page + has-more flag
+    RawResult    catalog(T query, Page page) throws ShazoException;  // one page of rows
 }
 ```
 
@@ -44,6 +47,36 @@ Two read shapes, deliberately distinct:
 - **`retrieve` / `find` / `gather`** return **objects**. `retrieve` leniently takes
   the first match; `find` is strict (exactly one — else `NotFoundException` or
   `MultipleFoundException`); `gather` returns all.
+
+### Paging (bounded reads)
+
+For match sets that may be large, both read shapes take a `Page` — skip
+`offset`, take at most `limit` — so memory and per-key retrieves are capped:
+
+```java
+var page = Page.of(50);
+var slice = orders.gather(query, page);          // Gathered<Order>: items + hasMore
+while (slice.hasMore()) {
+    process(slice);
+    slice = orders.gather(query, page = page.next());
+}
+process(slice);
+```
+
+`hasMore()` is exact (the repository probes one row past the window), and it
+works with **any existing describer, unchanged** — the fetch is bounded
+driver-side (`Statement.setMaxRows`), never by rewriting your SQL. When a
+deep-offset walk needs the database to apply the window itself, declare an
+optional paged catalog in your own dialect:
+
+```java
+.catalogPaged((q, page) -> List.of(SqlCommand.of(
+    "SELECT id FROM orders WHERE customer = ? ORDER BY id LIMIT ? OFFSET ?",
+    q.customer(), page.limit(), page.offset())))
+```
+
+Offset paging assumes the catalog query has a stable order — give it an
+`ORDER BY`.
 
 ## How it fits together
 

@@ -87,7 +87,18 @@ public final class JdbcRepository<T> extends AbstractRepository<T, SqlCommand> {
     @Override
     protected RawResult execute(List<SqlCommand> commands) throws ShazoException {
         try (var conn = dataSource.getConnection()) {
-            return executeOnConnection(conn, commands);
+            return executeOnConnection(conn, commands, 0);
+        } catch (ShazoException e) {
+            throw e;
+        } catch (SQLException e) {
+            throw new ShazoException("Failed to obtain JDBC connection", e);
+        }
+    }
+
+    @Override
+    protected RawResult execute(List<SqlCommand> commands, int maxRows) throws ShazoException {
+        try (var conn = dataSource.getConnection()) {
+            return executeOnConnection(conn, commands, maxRows);
         } catch (ShazoException e) {
             throw e;
         } catch (SQLException e) {
@@ -136,17 +147,28 @@ public final class JdbcRepository<T> extends AbstractRepository<T, SqlCommand> {
 
     static RawResult executeOnConnection(Connection conn, List<SqlCommand> commands)
             throws ShazoException {
+        return executeOnConnection(conn, commands, 0);
+    }
+
+    /** {@code maxRows > 0} caps each statement via {@link java.sql.Statement#setMaxRows}. */
+    static RawResult executeOnConnection(Connection conn, List<SqlCommand> commands, int maxRows)
+            throws ShazoException {
         var rows = new ArrayList<Map<String, Object>>();
         for (var sql : commands) {
             log.debug("SQL: {}", sql.statement());
-            rows.addAll(runSql(conn, sql));
+            rows.addAll(runSql(conn, sql, maxRows));
         }
         return RawResult.of(rows);
     }
 
-    private static List<Map<String, Object>> runSql(Connection conn, SqlCommand sql)
+    private static List<Map<String, Object>> runSql(Connection conn, SqlCommand sql, int maxRows)
             throws ShazoException {
         try (var ps = conn.prepareStatement(sql.statement())) {
+            if (maxRows > 0) {
+                // Bounds the fetch driver-side without touching the SQL text, so
+                // paged operations stay dialect-neutral (the describer owns SQL).
+                ps.setMaxRows(maxRows);
+            }
             var params = sql.parameters();
             for (int i = 0; i < params.size(); i++) {
                 ps.setObject(i + 1, params.get(i));

@@ -111,6 +111,12 @@ public abstract class AbstractRepository<T, C extends Command> implements Reposi
     }
 
     @Override
+    public RawResult catalog(T query, Page page) throws ShazoException {
+        var window = fetchWindow(query, page);
+        return RawResult.of(window.rows());
+    }
+
+    @Override
     public List<T> gather(T query) throws ShazoException {
         // Catalog the matching keys, then retrieve each as a full object.
         var key = requireKey();
@@ -120,6 +126,52 @@ public abstract class AbstractRepository<T, C extends Command> implements Reposi
         }
         return out;
     }
+
+    @Override
+    public Gathered<T> gather(T query, Page page) throws ShazoException {
+        // Catalog only the page's keys (plus a one-row probe for hasMore), then
+        // retrieve each — capping memory and per-key round trips at the limit.
+        var key = requireKey();
+        var window = fetchWindow(query, page);
+        var out = new ArrayList<T>(window.rows().size());
+        for (var row : window.rows()) {
+            retrieve(key.apply(row)).ifPresent(out::add);
+        }
+        return new Gathered<>(out, window.hasMore());
+    }
+
+    /**
+     * Fetches the page's catalog rows plus a one-row probe past the window, so
+     * {@code hasMore} is exact. Prefers the describer's
+     * {@linkplain Describer#catalogCommands(Object, Page) paged catalog} (the
+     * storage applies offset and limit); otherwise falls back to the plain
+     * catalog with the fetch {@linkplain #execute(List, int) capped} at
+     * {@code offset + limit + 1} rows and the offset skipped here.
+     */
+    private Window fetchWindow(T query, Page page) throws ShazoException {
+        // Probe one row past the caller's window to decide hasMore exactly.
+        var probe = new Page(page.offset(), page.limit() + 1);
+
+        List<java.util.Map<String, Object>> rows;
+        var pagedCommands = describer.catalogCommands(query, probe);
+        if (pagedCommands != null) {
+            // The storage already applied offset and limit+1.
+            rows = execute(pagedCommands).rows();
+        } else {
+            // Cap the fetch at what the window needs, then skip the offset here.
+            int cap = probe.offset() + probe.limit();
+            var all = execute(describer.catalogCommands(query), cap).rows();
+            rows = all.subList(Math.min(probe.offset(), all.size()), all.size());
+        }
+
+        boolean hasMore = rows.size() > page.limit();
+        if (hasMore) {
+            rows = rows.subList(0, page.limit());
+        }
+        return new Window(rows, hasMore);
+    }
+
+    private record Window(List<java.util.Map<String, Object>> rows, boolean hasMore) {}
 
     private java.util.function.Function<java.util.Map<String, Object>, T> requireKey() {
         var key = describer.key();
@@ -164,4 +216,22 @@ public abstract class AbstractRepository<T, C extends Command> implements Reposi
      * @throws ShazoException if any command fails
      */
     protected abstract RawResult execute(List<C> commands) throws ShazoException;
+
+    /**
+     * Executes commands with a hint that at most {@code maxRows} result rows are
+     * needed, used by paged operations to bound the fetch. The default ignores
+     * the hint and delegates to {@link #execute(List)} — always correct, since
+     * the caller slices the result — and backends that can cap at the source
+     * (e.g. JDBC via {@code Statement.setMaxRows}) override it. The hint is per
+     * invocation, not per command; returning more rows than the hint is
+     * permitted.
+     *
+     * @param commands the commands to execute; never {@code null}
+     * @param maxRows  the largest number of rows the caller will use; &ge; 1
+     * @return the aggregated result of all commands; never {@code null}
+     * @throws ShazoException if any command fails
+     */
+    protected RawResult execute(List<C> commands, int maxRows) throws ShazoException {
+        return execute(commands);
+    }
 }

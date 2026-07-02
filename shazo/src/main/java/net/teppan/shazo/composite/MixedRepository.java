@@ -94,8 +94,19 @@ public final class MixedRepository<T> implements Repository<T> {
     }
 
     @Override
+    public RawResult catalog(T query, net.teppan.shazo.Page page) throws ShazoException {
+        return primary.catalog(query, page);
+    }
+
+    @Override
     public List<T> gather(T query) throws ShazoException {
         return primary.gather(query);
+    }
+
+    @Override
+    public net.teppan.shazo.Gathered<T> gather(T query, net.teppan.shazo.Page page)
+            throws ShazoException {
+        return primary.gather(query, page);
     }
 
     // ── Write operations — fan-out to all ────────────────────────────────────

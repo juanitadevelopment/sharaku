@@ -24,22 +24,25 @@ import java.util.Objects;
  * <pre>
  * Request:
  *   byte     operation code (Protocol.OP_*)
+ *   [paged ops only: int32 offset, int32 limit]
  *   byte[]   codec.encode(T)   (remainder of stream)
  *
  * Response:
  *   byte     status (Protocol.STATUS_*)
  *   byte[]   payload:
- *     STATUS_OK + OP_CONTAINS  →  1 byte (0=false, 1=true)
- *     STATUS_OK + OP_STORE     →  empty
- *     STATUS_OK + OP_DELETE    →  empty
- *     STATUS_OK + OP_RETRIEVE  →  codec.encode(T)
- *     STATUS_OK + OP_FIND      →  codec.encode(T)
- *     STATUS_OK + OP_GATHER    →  int32 count, then for each item:
- *                                   int32 len, byte[len] codec.encode(item)
- *     STATUS_OK + OP_CATALOG   →  RowCodec table (typed rows)
- *     STATUS_NOT_FOUND         →  empty  (retrieve / find)
- *     STATUS_MULTIPLE_FOUND    →  int32 match count  (find)
- *     STATUS_EXCEPTION         →  UTF-8 error message
+ *     STATUS_OK + OP_CONTAINS      →  1 byte (0=false, 1=true)
+ *     STATUS_OK + OP_STORE         →  empty
+ *     STATUS_OK + OP_DELETE        →  empty
+ *     STATUS_OK + OP_RETRIEVE      →  codec.encode(T)
+ *     STATUS_OK + OP_FIND          →  codec.encode(T)
+ *     STATUS_OK + OP_GATHER        →  int32 count, then for each item:
+ *                                       int32 len, byte[len] codec.encode(item)
+ *     STATUS_OK + OP_GATHER_PAGED  →  1 byte hasMore (0/1), then as OP_GATHER
+ *     STATUS_OK + OP_CATALOG       →  RowCodec table (typed rows)
+ *     STATUS_OK + OP_CATALOG_PAGED →  RowCodec table (the page's rows)
+ *     STATUS_NOT_FOUND             →  empty  (retrieve / find)
+ *     STATUS_MULTIPLE_FOUND        →  int32 match count  (find)
+ *     STATUS_EXCEPTION             →  UTF-8 error message
  * </pre>
  *
  * @param <T> the domain type managed by the wrapped repository
@@ -76,11 +79,15 @@ public final class RepositoryRequestHandler<T> {
 
         byte   op;
         byte[] payload;
+        net.teppan.shazo.Page page = null;
         try {
             var in = new DataInputStream(rawIn);
-            op      = in.readByte();
+            op = in.readByte();
+            if (op == Protocol.OP_GATHER_PAGED || op == Protocol.OP_CATALOG_PAGED) {
+                page = new net.teppan.shazo.Page(in.readInt(), in.readInt());
+            }
             payload = in.readAllBytes();
-        } catch (IOException e) {
+        } catch (IOException | IllegalArgumentException e) {
             writeException(out, "Failed to read request: " + e.getMessage());
             return;
         }
@@ -131,8 +138,24 @@ public final class RepositoryRequestHandler<T> {
                         out.write(encoded);
                     }
                 }
+                case Protocol.OP_GATHER_PAGED -> {
+                    var slice = repository.gather(codec.decode(payload), page);
+                    out.writeByte(Protocol.STATUS_OK);
+                    out.writeByte(slice.hasMore() ? 1 : 0);
+                    out.writeInt(slice.size());
+                    for (var item : slice) {
+                        byte[] encoded = codec.encode(item);
+                        out.writeInt(encoded.length);
+                        out.write(encoded);
+                    }
+                }
                 case Protocol.OP_CATALOG -> {
                     var table = repository.catalog(codec.decode(payload));
+                    out.writeByte(Protocol.STATUS_OK);
+                    RowCodec.write(out, table);
+                }
+                case Protocol.OP_CATALOG_PAGED -> {
+                    var table = repository.catalog(codec.decode(payload), page);
                     out.writeByte(Protocol.STATUS_OK);
                     RowCodec.write(out, table);
                 }
