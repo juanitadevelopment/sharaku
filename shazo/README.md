@@ -259,6 +259,44 @@ SchemaManager.apply(dataSource, "net/teppan/myapp/schema/");
 `shazo` ships no JDBC driver — add `shazo-h2` only if you want this convenience;
 otherwise supply your own `DataSource`.
 
+## Production databases (PostgreSQL, MySQL, …)
+
+Core `shazo` targets **any `javax.sql.DataSource`** and bundles no JDBC driver,
+so a production database is the "bring your own `DataSource`" case: add the
+driver you want (at the version matching your server) and a connection pool such
+as HikariCP. There is deliberately no `shazo-postgres` module — a driver plus a
+pool is all it takes, and both are things you configure per app. (The `shazo-h2`
+module exists only because embedded H2 is the zero-setup dev/test on-ramp, the
+one case where the library creating the `DataSource` for you is a real
+convenience.)
+
+```kotlin
+dependencies {
+    runtimeOnly("org.postgresql:postgresql:42.7.3")
+    implementation("com.zaxxer:HikariCP:5.1.0")
+}
+```
+
+```java
+// 1. A pooled DataSource for your server (credentials from config/secrets)
+var cfg = new HikariConfig();
+cfg.setJdbcUrl("jdbc:postgresql://db.internal:5432/app");
+cfg.setUsername(System.getenv("DB_USER"));
+cfg.setPassword(System.getenv("DB_PASSWORD"));
+cfg.setMaximumPoolSize(16);
+DataSource ds = new HikariDataSource(cfg);
+
+// 2. Migrations, describer, repository — identical to the H2 quick start
+SchemaManager.apply(ds, "net/teppan/myapp/schema/");
+var repo = new JdbcRepository<>(ds, personDescriber);
+```
+
+Everything above the `DataSource` — describers, repositories, `Transactor`,
+`SchemaManager`, the whole `net.teppan.backbone` runtime — is unchanged from the
+H2 examples; only the `DataSource` differs. For Postgres integration tests,
+point HikariCP at a [Testcontainers](https://testcontainers.org) instance the
+same way.
+
 ## Tenant-scoped connections
 
 `SessionInitDataSource` wraps a `DataSource` and runs initialization SQL on every
