@@ -3,6 +3,7 @@ package net.teppan.backbone;
 import net.teppan.backbone.event.Outbox;
 import net.teppan.backbone.event.OutboxEntry;
 import net.teppan.backbone.event.PersistentEventQueue;
+import net.teppan.shazo.Repository;
 import net.teppan.shazo.ShazoException;
 import net.teppan.shazo.jdbc.Repositories;
 import net.teppan.shazo.jdbc.Transactor;
@@ -108,11 +109,21 @@ public final class ServiceRunner implements AutoCloseable {
     // ScopedValue once the baseline moves to JDK 25 — the public API is unchanged.
     private final ThreadLocal<String> ambientTenant = new ThreadLocal<>();
 
+    // Enlisted routes: each is a secondary database plus the registry of types it
+    // serves. AppContext resolves types primary-first, then routes in declaration
+    // order; a route's connection is opened lazily and joins the service's commit
+    // boundary (routes commit first, primary last).
+    private final List<RouteDecl> routes;
+    private final Map<Class<?>, Repository<?>> instanceRoutes;
+
     private record Subscription<E>(Class<E> type, Consumer<E> listener) {}
 
     /** A declared persistent queue: its base type, decode allowlist, and subscribers. */
     private record QueueDecl(Class<?> baseType, List<Class<?>> payloadTypes,
                              List<Consumer<?>> listeners) {}
+
+    /** A declared enlisted route: a secondary data source and the types it serves. */
+    record RouteDecl(DataSource dataSource, Repositories repositories) {}
 
     private ServiceRunner(Function<String, DataSource> router, Locale defaultLocale,
                           Map<String, AppService<?>> services,
@@ -120,7 +131,9 @@ public final class ServiceRunner implements AutoCloseable {
                           List<Class<?>> outboxTypes,
                           Duration pollInterval, Duration retention, int maxAttempts,
                           Repositories describers,
-                          Map<String, QueueDecl> queueDecls) {
+                          Map<String, QueueDecl> queueDecls,
+                          List<RouteDecl> routes,
+                          Map<Class<?>, Repository<?>> instanceRoutes) {
         this.router             = router;
         this.defaultLocale      = defaultLocale;
         this.services           = Map.copyOf(services);
@@ -132,6 +145,8 @@ public final class ServiceRunner implements AutoCloseable {
         this.outboxRetention    = retention;
         this.outboxMaxAttempts  = maxAttempts;
         this.queueDecls         = Map.copyOf(queueDecls);
+        this.routes             = List.copyOf(routes);
+        this.instanceRoutes     = Map.copyOf(instanceRoutes);
     }
 
     /**
@@ -264,11 +279,18 @@ public final class ServiceRunner implements AutoCloseable {
                         // Persist events in the same transaction (this tenant's DB).
                         outbox.write(uow.connection(), ctx.pendingEvents());
                     }
+                    // Enlisted routes commit first; the primary commits when this
+                    // task returns, sealing the outbox events last. If a route
+                    // commit throws, the primary is still open and rolls back —
+                    // a clean, retryable failure.
+                    ctx.commitRoutes();
                     return r;
                 } catch (AppServiceException e) {
                     throw new ServiceFailure(e);
                 } catch (Exception e) {
                     throw new ServiceFailure(new AppServiceException("Service execution failed", e));
+                } finally {
+                    ctx.releaseRoutes();
                 }
             });
         } catch (ShazoException e) {
@@ -601,6 +623,16 @@ public final class ServiceRunner implements AutoCloseable {
         return describers;
     }
 
+    /** The declared enlisted routes, in declaration order. */
+    List<RouteDecl> routes() {
+        return routes;
+    }
+
+    /** The declared per-operation (non-enlisted) repository routes. */
+    Map<Class<?>, Repository<?>> instanceRoutes() {
+        return instanceRoutes;
+    }
+
     private static String tenantKey(String tenant) {
         return tenant == null ? "" : tenant;
     }
@@ -717,6 +749,8 @@ public final class ServiceRunner implements AutoCloseable {
         private int outboxMaxAttempts = Outbox.DEFAULT_MAX_ATTEMPTS;
         private Repositories describers;
         private final Map<String, QueueDeclBuilder> queues = new LinkedHashMap<>();
+        private final List<RouteDecl> routes = new ArrayList<>();
+        private final Map<Class<?>, Repository<?>> instanceRoutes = new LinkedHashMap<>();
 
         private Builder() {}
 
@@ -861,6 +895,77 @@ public final class ServiceRunner implements AutoCloseable {
         }
 
         /**
+         * Declares an <em>enlisted route</em>: a secondary database serving the
+         * types registered in {@code repositories}, whose work joins each
+         * service's commit boundary. Within a service,
+         * {@link AppContext#repository(Class)} (and the typed reads) resolve a
+         * type against the primary {@linkplain #describers(Repositories)
+         * registry} first, then against each route in declaration order — the
+         * service code never names a database.
+         *
+         * <p><b>Transaction semantics.</b> A route's connection is opened lazily,
+         * on the first operation that touches one of its types, with auto-commit
+         * off; every later operation on that route within the same service
+         * execution runs on that same pinned connection (so reads within the
+         * service see its own writes). If the service fails, the primary
+         * transaction <em>and every enlisted route</em> roll back together. If it
+         * succeeds, the routes commit first and the primary commits last — the
+         * primary commit also seals the service's outbox events. A route commit
+         * failure aborts the whole execution while the primary is still open, so
+         * it surfaces as a plain {@link AppServiceException} (rolled back,
+         * retryable).
+         *
+         * <p><b>This is not two-phase commit.</b> The commits are sequential; a
+         * crash between a route's commit and the primary's leaves the route's
+         * changes durable without the primary's (and with several routes, a
+         * commit failure mid-sequence leaves earlier routes committed). This is
+         * the same window the original framework's multi-connection commit had.
+         * Writes that cannot tolerate it should go through the transactional
+         * outbox instead: commit them on the primary and relay them to the other
+         * database from an idempotent event listener.
+         *
+         * <p>Each service execution that touches a route holds one extra
+         * connection per touched route until commit — size the routes' pools for
+         * the service concurrency. Routes are shared across tenants: tenant
+         * routing applies to the primary data source only. Types registered both
+         * in the primary registry and on a route resolve to the primary.
+         *
+         * @param dataSource   the route's data source; never {@code null}
+         * @param repositories the registry of types this route serves; never {@code null}
+         * @return this builder
+         */
+        public Builder route(DataSource dataSource, Repositories repositories) {
+            routes.add(new RouteDecl(
+                Objects.requireNonNull(dataSource,   "dataSource"),
+                Objects.requireNonNull(repositories, "repositories")));
+            return this;
+        }
+
+        /**
+         * Declares a <em>per-operation route</em>: a self-contained
+         * {@link Repository} (typically non-JDBC — HTTP, file, shell) serving one
+         * type, resolved by {@link AppContext#repository(Class)} after the
+         * primary registry and the enlisted routes.
+         *
+         * <p>Unlike an {@linkplain #route(DataSource, Repositories) enlisted
+         * route}, such a repository has no transaction to enlist: <b>each
+         * operation takes effect immediately and is not rolled back</b> when the
+         * service later fails. Reserve it for backends without transactions, and
+         * prefer idempotent writes there.
+         *
+         * @param type       the domain type this repository serves; never {@code null}
+         * @param repository the repository handling that type; never {@code null}
+         * @param <T>        the domain type
+         * @return this builder
+         */
+        public <T> Builder route(Class<T> type, Repository<T> repository) {
+            instanceRoutes.put(
+                Objects.requireNonNull(type,       "type"),
+                Objects.requireNonNull(repository, "repository"));
+            return this;
+        }
+
+        /**
          * Declares a durable named intake queue (a {@link PersistentEventQueue}) that
          * accepts events — typically from outside the application — and delivers them
          * to its {@linkplain #persistentQueueListener(String, Consumer) subscribers}
@@ -931,7 +1036,7 @@ public final class ServiceRunner implements AutoCloseable {
             }
             return new ServiceRunner(router, defaultLocale, services, subscriptions,
                 outboxTypes, outboxPollInterval, outboxRetention,
-                outboxMaxAttempts, describers, decls);
+                outboxMaxAttempts, describers, decls, routes, instanceRoutes);
         }
     }
 }

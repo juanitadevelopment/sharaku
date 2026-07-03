@@ -1,7 +1,5 @@
 package net.teppan.shazo.jdbc;
 
-import net.teppan.shazo.Describer;
-import net.teppan.shazo.Repository;
 import net.teppan.shazo.ShazoException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -66,7 +64,7 @@ public final class Transactor {
         try (var conn = dataSource.getConnection()) {
             conn.setAutoCommit(false);
             try {
-                R result = task.perform(new BoundUnitOfWork(conn));
+                R result = task.perform(UnitOfWork.over(conn));
                 conn.commit();
                 return result;
             } catch (ShazoException e) {
@@ -88,30 +86,6 @@ public final class Transactor {
             conn.rollback();
         } catch (SQLException e) {
             log.warn("Rollback failed", e);
-        }
-    }
-
-    /** A unit of work bound to one connection; vends repositories on demand. */
-    private static final class BoundUnitOfWork implements UnitOfWork {
-
-        private final Connection connection;
-        private final Connection guarded;
-
-        BoundUnitOfWork(Connection connection) {
-            this.connection = connection;
-            this.guarded = GuardedConnection.wrap(connection);
-        }
-
-        @Override
-        public <T> Repository<T> repository(Describer<T, SqlCommand> describer) {
-            return new BoundJdbcRepository<>(connection, describer);
-        }
-
-        @Override
-        public Connection connection() {
-            // Hand application code a guarded view: it may run statements but must
-            // not commit/rollback/close the transaction the Transactor owns.
-            return guarded;
         }
     }
 }

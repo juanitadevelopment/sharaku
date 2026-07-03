@@ -41,6 +41,40 @@ import java.sql.Connection;
 public interface UnitOfWork {
 
     /**
+     * Returns a {@code UnitOfWork} bound to an existing connection whose
+     * transaction boundary the <em>caller</em> owns.
+     *
+     * <p>Unlike units of work handed out by a {@link Transactor} — which commits
+     * or rolls back for you — this factory only binds repositories to
+     * {@code connection}. The caller must have disabled auto-commit and remains
+     * responsible for {@code commit()}, {@code rollback()}, and {@code close()}
+     * on the original connection. {@link #connection()} still returns a guarded
+     * view, so code receiving the unit of work cannot break that boundary.
+     *
+     * <p>This is the enlistment primitive for coordinating work on a secondary
+     * database with an externally managed transaction (e.g. backbone's
+     * {@code ServiceRunner} routes).
+     *
+     * @param connection the open JDBC connection to bind; never {@code null}
+     * @return a unit of work vending repositories pinned to that connection
+     */
+    static UnitOfWork over(Connection connection) {
+        java.util.Objects.requireNonNull(connection, "connection");
+        var guarded = GuardedConnection.wrap(connection);
+        return new UnitOfWork() {
+            @Override
+            public <T> Repository<T> repository(Describer<T, SqlCommand> describer) {
+                return new BoundJdbcRepository<>(connection, describer);
+            }
+
+            @Override
+            public Connection connection() {
+                return guarded;
+            }
+        };
+    }
+
+    /**
      * Returns a repository for {@code describer} bound to this unit of work's
      * transaction. Repositories returned within the same unit of work all share
      * one connection and therefore one transaction.
