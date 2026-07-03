@@ -27,6 +27,7 @@ container, dynamic proxies, or XML.
 | Identity | `Principal` | Immutable id + roles; `anonymous()` / `system()` |
 | Domain events | `ServiceRunner.subscribe` + `Outbox` | In-process or durable (transactional outbox), delivered after commit |
 | External-event intake | `PersistentEventQueue` | Durable, restart-surviving, idempotent queue for events arriving from outside |
+| Multi-database services | `ServiceRunner.route` / outbox relay | One service across several databases: synchronous enlisted routes, or at-least-once relay |
 | Scheduling | `TimerScheduler`, `CronExpression` | Interval, 6-field cron, and one-shot (deadline) jobs as system units of work |
 | Operations | `BackboneConsole` | One surface to view and control the runner and scheduler at run time |
 
@@ -159,6 +160,96 @@ try (var runner = ServiceRunner.builder()
 
 This revives the framework's original `PersistentEventQueue` (the durable peer of
 the in-memory `TransientEventQueue`), rebuilt on the modern outbox engine.
+
+## Multi-database services
+
+A service can span more than one physical database. There are two ways to do it,
+with different guarantees — pick by whether you need the second write to be
+*synchronous* or *never lost*.
+
+### Enlisted routes — synchronous, shared commit boundary
+
+Declare a **route**: a second data source and the types it serves. The service
+names only the domain type; which database backs it is decided in the wiring,
+exactly as `describers(...)` does for the primary.
+
+```java
+try (var runner = ServiceRunner.builder()
+        .dataSource(ediDataSource)
+        .describers(Repositories.builder().register(Order.class, orderDescriber).build())
+        // a second DB, serving Part — the modern form of the old BOR.xml
+        // <repository name="ORS"> + <target> group:
+        .route(orsDataSource, Repositories.builder().register(Part.class, partDescriber).build())
+        .build()) {
+
+    runner.run(ctx -> {
+        ctx.repository(Order.class).store(order);   // primary DB
+        ctx.repository(Part.class).store(part);     // routed DB — same service
+        return null;
+    }, principal);
+}
+```
+
+- **Resolution** — a type resolves against the primary registry first, then each
+  route in declaration order. A type registered on both resolves to the primary.
+- **Lazy enlistment** — a route's connection is opened only when the service first
+  touches one of its types, then pinned for the rest of the execution. Reads on a
+  route see the service's own writes (read-your-writes); untouched routes cost
+  nothing.
+- **Shared commit boundary** — on success the routes commit first and the primary
+  commits last (sealing the outbox events). If the service throws, the primary and
+  every route roll back together. If a route commit fails, the primary is still
+  open and the whole execution rolls back — a plain, retryable `AppServiceException`.
+- **Not two-phase commit** — the commits are sequential. A crash *between* a route
+  commit and the primary commit (or between two routes) leaves them inconsistent.
+  This is the same narrow window the original framework's multi-connection commit
+  had. When that window is unacceptable, use the relay below.
+- **Non-transactional backends** — an HTTP/file/shell repository has no transaction
+  to enlist. Register it with `route(Type.class, repository)`: it takes effect
+  immediately, per operation, and is **not** rolled back with the service.
+
+`ctx.store(...)`/`delete`/`contains` stay on the primary transaction only; reach a
+routed type through `ctx.repository(Type.class)` or the typed reads.
+
+### Outbox relay — asynchronous, at-least-once, nothing lost
+
+When the second write must never be lost — a real cross-system integration, or the
+route's crash window is simply not acceptable — commit it to the primary as a
+**durable event** and relay it to the other database from an idempotent listener:
+
+```java
+try (var runner = ServiceRunner.builder()
+        .dataSource(primaryDataSource)
+        .describers(Repositories.builder().register(Order.class, orderDescriber).build())
+        .durableEvents(ShipmentRequested.class)
+        // relay: runs after commit, on the poller, retried until it succeeds
+        .subscribe(ShipmentRequested.class, e -> shippingRepo.store(
+            new Shipment(e.orderId(), "REQUESTED")))     // idempotent (MERGE) on the 2nd DB
+        .build()) {
+
+    runner.run(ctx -> {
+        ctx.repository(Order.class).store(order);
+        ctx.publish(new ShipmentRequested(order.id(), order.customer()));  // committed with the order
+        return id;
+    }, principal);
+}
+```
+
+The event is committed atomically with the business change and delivered
+at-least-once with retry and dead-lettering, so the two databases are guaranteed
+to converge — even across a crash right after the primary commit: the intent
+survives as a pending outbox row and is redelivered on restart. The cost is that
+the second database lags by the poll interval, and the relay must be idempotent
+(a lost ack means redelivery). See `OutboxRelayPatternTest` for the guarantees
+spelled out as tests.
+
+### Which one?
+
+| Your need | Use |
+|---|---|
+| The second write must be visible **immediately** inside the service (read-your-writes / synchronous consistency), and a rare crash-window inconsistency is tolerable | **Enlisted route** |
+| The second write must **never be lost** — cross-system integration, separate operational boundary — and eventual (async) convergence is fine | **Outbox relay** |
+| Both databases must be **all-or-nothing with zero window** | Neither — that needs XA/2PC, which is out of scope by design |
 
 ## Multi-tenancy
 
