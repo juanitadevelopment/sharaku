@@ -12,21 +12,21 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Tests for {@link MixedRepository}.
+ * Tests for {@link ReplicatingRepository}.
  */
-class MixedRepositoryTest {
+class ReplicatingRepositoryTest {
 
     record Widget(String id, String label) {}
 
     private InMemoryRepository<Widget> primary;
     private InMemoryRepository<Widget> secondary;
-    private MixedRepository<Widget> mixed;
+    private ReplicatingRepository<Widget> mixed;
 
     @BeforeEach
     void setUp() {
         primary   = new InMemoryRepository<>(Widget::id);
         secondary = new InMemoryRepository<>(Widget::id);
-        mixed     = MixedRepository.of(primary, secondary);
+        mixed     = ReplicatingRepository.of(primary, secondary);
     }
 
     // ── store — fans out to all repositories ─────────────────────────────────
@@ -114,7 +114,7 @@ class MixedRepositoryTest {
 
     @Test
     void mixedWithSingleDelegateWorksCorrectly() throws ShazoException {
-        var single = MixedRepository.of(primary);
+        var single = ReplicatingRepository.of(primary);
         single.store(new Widget("1", "Solo"));
 
         assertTrue(single.contains(new Widget("1", null)));

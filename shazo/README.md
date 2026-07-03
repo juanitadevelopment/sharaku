@@ -218,7 +218,7 @@ naming the describer's command type.
 | Shell command | `ShellRepository<T>` | `ShellCommand` | `ProcessBuilder`; per-process timeout |
 | Remote HTTP | `HttpRepositoryAdapter<T>` / `HttpRepositoryServlet<T>` | — | binary protocol; pluggable `Codec` |
 | In-memory cache | `CacheRepository<T>` | — | TTL decorator over any repository |
-| Fan-out | `MixedRepository<T>` | — | writes to many, reads from a primary |
+| Replicating | `ReplicatingRepository<T>` | — | writes to many (same type), reads from a primary |
 | Async | `AsyncRepository<T>` | — | `CompletableFuture` wrapper on virtual threads |
 
 ### File backend
@@ -238,7 +238,7 @@ directory (`../…`, absolute paths) are rejected.
 var cached = new CacheRepository<>(jdbcRepo, Duration.ofMinutes(10), Person::id);
 
 // mirror writes to a replica; read from the primary
-var mixed  = MixedRepository.of(primaryRepo, replicaRepo);
+var replicated = ReplicatingRepository.of(primaryRepo, replicaRepo);
 
 // non-blocking access (closes its executor)
 try (var async = new AsyncRepository<>(jdbcRepo)) {
