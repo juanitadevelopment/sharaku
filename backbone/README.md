@@ -9,13 +9,13 @@ work per request, composable services, domain events delivered *after* commit,
 scheduled jobs, and basic runtime introspection — without a heavyweight
 container, dynamic proxies, or XML.
 
-> **Status:** early release (`0.3.1`). API may still change before `1.0.0`.
+> **Status:** early release (`0.3.2`). API may still change before `1.0.0`.
 
 ## Requirements
 
 - **Java 21+**
 - **shazo** — lives in the same [`sharaku`](..) repo and is always version-aligned
-  (`0.3.1`); no separate install
+  (`0.3.2`); no separate install
 
 ## What it gives you
 
@@ -27,6 +27,7 @@ container, dynamic proxies, or XML.
 | Identity | `Principal` | Immutable id + roles; `anonymous()` / `system()` |
 | Domain events | `ServiceRunner.subscribe` + `Outbox` | In-process or durable (transactional outbox), delivered after commit |
 | External-event intake | `PersistentEventQueue` | Durable, restart-surviving, idempotent queue for events arriving from outside |
+| Blob storage | `BlobStore` | Opaque binary content stored atomically with the business row referencing it |
 | Multi-database services | `ServiceRunner.route` / outbox relay | One service across several databases: synchronous enlisted routes, or at-least-once relay |
 | Scheduling | `TimerScheduler`, `CronExpression` | Interval, 6-field cron, and one-shot (deadline) jobs as system units of work |
 | Operations | `BackboneConsole` | One surface to view and control the runner and scheduler at run time |
@@ -160,6 +161,45 @@ try (var runner = ServiceRunner.builder()
 
 This revives the framework's original `PersistentEventQueue` (the durable peer of
 the in-memory `TransientEventQueue`), rebuilt on the modern outbox engine.
+
+## Blob storage
+
+`BlobStore` holds opaque binary content — attachments, exported documents —
+that is too large or unstructured for a typed `Repository` column. Its point is
+the same one the outbox makes for events: writing on the caller's own
+connection means the blob commits or rolls back **atomically** with whatever
+business row references it, so "the file was written but the row wasn't" (or
+the reverse) cannot happen.
+
+```java
+var blobs = new BlobStore(dataSource);   // applies its schema migration once
+
+try (var conn = dataSource.getConnection()) {
+    conn.setAutoCommit(false);
+    var ref = blobs.store(conn, fileStream, new BlobMeta("invoice.pdf", "application/pdf"));
+    attachmentRepo.store(new Attachment(orderId, ref.id()));   // same connection
+    conn.commit();                                             // both or neither
+}
+
+try (var content = blobs.open(ref.id())) {   // streamed, never fully materialized
+    content.transferTo(response.getOutputStream());
+}
+```
+
+- **`store(Connection, InputStream, BlobMeta)`** joins the caller's transaction;
+  **`store(InputStream, BlobMeta)`** is the standalone form for blobs with no
+  surrounding transaction to join.
+- **Streaming both ways** — `store` writes via `setBinaryStream` rather than
+  buffering into a `byte[]`, and `open` returns a stream backed directly by the
+  result set. The returned `BlobRef`'s size and SHA-256 digest are measured as a
+  side effect of that same streaming write, not a separate pass.
+- **Opaque on purpose** — a blob is a name, a media type, and bytes, never a
+  Java object graph; there is no `Object`-accepting overload, so this cannot
+  become a second, less-scrutinized deserialization path.
+- **`metadata(id)`** reads the `BlobRef` without the content; **`delete(id)`**
+  removes it.
+- Not yet included (v1 is deliberately DB-backed only): deduplication by
+  digest, a retention/GC policy, or an external backend such as S3.
 
 ## Multi-database services
 
@@ -370,7 +410,7 @@ which builds shazo transitively:
 ```kotlin
 repositories { maven { url = uri("https://jitpack.io") } }
 dependencies {
-    implementation("com.github.juanitadevelopment.sharaku:backbone:0.3.1")
+    implementation("com.github.juanitadevelopment.sharaku:backbone:0.3.2")
 }
 ```
 
