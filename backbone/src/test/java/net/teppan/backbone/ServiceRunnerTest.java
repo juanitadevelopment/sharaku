@@ -1,5 +1,6 @@
 package net.teppan.backbone;
 
+import net.teppan.backbone.testsupport.Await;
 import net.teppan.shazo.Describer;
 import net.teppan.shazo.jdbc.JdbcRepository;
 import net.teppan.shazo.jdbc.Repositories;
@@ -146,7 +147,7 @@ class ServiceRunnerTest {
             runner.execute("create", Principal.system());
 
             // The subscriber keeps failing, so the event is dead-lettered.
-            awaitUntil(() -> runner.deadLetterCount().orElse(0) >= 1);
+            Await.until(() -> runner.deadLetterCount().orElse(0) >= 1);
             assertThat(runner.pendingEventCount().getAsLong()).isZero();
             var dead = runner.deadLetterEvents(10);
             assertThat(dead).hasSize(1);
@@ -155,18 +156,10 @@ class ServiceRunnerTest {
             // Fix the subscriber and requeue: it is now delivered.
             down.set(false);
             assertThat(runner.retryEvent(dead.get(0).id())).isTrue();
-            awaitUntil(() -> !delivered.isEmpty());
+            Await.until(() -> !delivered.isEmpty());
             assertThat(delivered).containsExactly("x1");
             assertThat(runner.deadLetterCount().getAsLong()).isZero();
         }
-    }
-
-    private static void awaitUntil(java.util.function.BooleanSupplier cond) throws Exception {
-        long deadline = System.currentTimeMillis() + 3000;
-        while (!cond.getAsBoolean() && System.currentTimeMillis() < deadline) {
-            Thread.sleep(20);
-        }
-        assertThat(cond.getAsBoolean()).isTrue();
     }
 
     @Test

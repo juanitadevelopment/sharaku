@@ -86,11 +86,11 @@ public final class RowCodec {
 
     /** Reads a {@link RawResult} previously written by {@link #write}. */
     public static RawResult read(DataInputStream in) throws IOException {
-        int nCols = in.readInt();
+        int nCols = Frames.readBounded(in, "columnCount");
         var columns = new ArrayList<String>(nCols);
         for (int c = 0; c < nCols; c++) columns.add(readString(in));
 
-        int nRows = in.readInt();
+        int nRows = Frames.readBounded(in, "rowCount");
         var rows = new ArrayList<Map<String, Object>>(nRows);
         for (int r = 0; r < nRows; r++) {
             var row = new LinkedHashMap<String, Object>();
@@ -132,7 +132,7 @@ public final class RowCodec {
             case LONG      -> in.readLong();
             case DOUBLE    -> in.readDouble();
             case DECIMAL   -> new BigDecimal(readString(in));
-            case BYTES     -> in.readNBytes(in.readInt());
+            case BYTES     -> in.readNBytes(Frames.readBounded(in, "bytesLength"));
             case TIMESTAMP -> { var t = new java.sql.Timestamp(in.readLong()); t.setNanos(in.readInt()); yield t; }
             case DATE      -> new java.sql.Date(in.readLong());
             case TIME      -> new java.sql.Time(in.readLong());
@@ -149,6 +149,6 @@ public final class RowCodec {
     }
 
     private static String readString(DataInputStream in) throws IOException {
-        return new String(in.readNBytes(in.readInt()), StandardCharsets.UTF_8);
+        return new String(in.readNBytes(Frames.readBounded(in, "stringLength")), StandardCharsets.UTF_8);
     }
 }

@@ -211,6 +211,57 @@ class ShellRepositoryTest {
             .isInstanceOf(ShazoException.class);
     }
 
+    // ── Argument redaction ──────────────────────────────────────────────────────
+
+    @Test
+    void safeDescriptionNamesExecutableButNotArgumentValues() {
+        var cmd = ShellCommand.of("grep", "--password=hunter2", "/etc/secret");
+        assertThat(cmd.safeDescription())
+            .contains("grep")
+            .contains("2 arg(s)")
+            .doesNotContain("hunter2")
+            .doesNotContain("/etc/secret");
+    }
+
+    @Test
+    void nonZeroExitMessageDoesNotLeakArgumentValues() {
+        // A sensitive value is passed as an argument ($0 to the script) but never
+        // echoed, so it must not surface in the exception message the repository
+        // throws (which the HTTP transport can relay to a remote caller).
+        Describer<Line, ShellCommand> describer = Describer.<Line, ShellCommand>builder()
+            .contains(l -> List.of())
+            .store   (l -> List.of())
+            .delete  (l -> List.of())
+            .retrieve(l -> List.of(ShellCommand.of("sh", "-c", "exit 7", "SUPERSECRET_TOKEN")))
+            .catalog (l -> List.of())
+            .infuser (result -> new Line(""))
+            .build();
+
+        assertThatThrownBy(() -> new ShellRepository<>(describer).retrieve(new Line("x")))
+            .isInstanceOf(ShazoException.class)
+            .hasMessageContaining("code 7")
+            .hasMessageContaining("sh [3 arg(s)]")
+            .hasMessageNotContaining("SUPERSECRET_TOKEN");
+    }
+
+    @Test
+    void failedStartMessageDoesNotLeakArgumentValues() {
+        Describer<Line, ShellCommand> describer = Describer.<Line, ShellCommand>builder()
+            .contains(l -> List.of())
+            .store   (l -> List.of())
+            .delete  (l -> List.of())
+            .retrieve(l -> List.of(ShellCommand.of(
+                "__no_such_command_shazo_test__", "SUPERSECRET_TOKEN")))
+            .catalog (l -> List.of())
+            .infuser (result -> new Line(""))
+            .build();
+
+        assertThatThrownBy(() -> new ShellRepository<>(describer).retrieve(new Line("x")))
+            .isInstanceOf(ShazoException.class)
+            .hasMessageContaining("__no_such_command_shazo_test__ [1 arg(s)]")
+            .hasMessageNotContaining("SUPERSECRET_TOKEN");
+    }
+
     // ── LineParser factory ────────────────────────────────────────────────────
 
     @Test

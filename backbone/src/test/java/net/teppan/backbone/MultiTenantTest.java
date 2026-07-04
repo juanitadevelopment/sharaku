@@ -1,5 +1,6 @@
 package net.teppan.backbone;
 
+import net.teppan.backbone.testsupport.Await;
 import net.teppan.shazo.Describer;
 import net.teppan.shazo.jdbc.Repositories;
 import net.teppan.backbone.timer.TimerScheduler;
@@ -134,7 +135,7 @@ class MultiTenantTest {
 
             // Each tenant has its own backbone_outbox (in its schema) and poller;
             // both events are delivered.
-            awaitUntil(() -> delivered.contains("a") && delivered.contains("g"));
+            Await.until(() -> delivered.contains("a") && delivered.contains("g"));
             assertThat(runner.forTenant("acme").pendingEventCount()).isPresent();
             assertThat(runner.forTenant("globex").pendingEventCount()).isPresent();
         }
@@ -172,7 +173,7 @@ class MultiTenantTest {
                     }
                     ranFor.add(ctx.tenant().orElse("?"));
                 });
-            awaitUntil(() -> ranFor.contains("acme") && ranFor.contains("globex"));
+            Await.until(() -> ranFor.contains("acme") && ranFor.contains("globex"));
             scheduler.cancel("all-tick");
         }
         assertThat(itemName("acme", "fan")).isEqualTo("Fanned");
@@ -185,11 +186,5 @@ class MultiTenantTest {
              var rs = st.executeQuery("SELECT name FROM " + schema + ".item WHERE id = '" + id + "'")) {
             return rs.next() ? rs.getString(1) : null;
         }
-    }
-
-    private static void awaitUntil(java.util.function.BooleanSupplier cond) throws Exception {
-        long deadline = System.currentTimeMillis() + 3000;
-        while (!cond.getAsBoolean() && System.currentTimeMillis() < deadline) Thread.sleep(20);
-        assertThat(cond.getAsBoolean()).isTrue();
     }
 }

@@ -1,6 +1,7 @@
 package net.teppan.backbone.management;
 
 import net.teppan.backbone.Principal;
+import net.teppan.backbone.testsupport.Await;
 import net.teppan.backbone.ServiceRunner;
 import net.teppan.backbone.timer.TimerScheduler;
 import net.teppan.backbone.timer.TimerScheduler.JobStatus;
@@ -86,12 +87,12 @@ class BackboneConsoleTest {
             final String text = "n" + i;
             runner.run(ctx -> { ctx.publish(new Note(text)); return null; }, Principal.system());
         }
-        awaitUntil(() -> runner.deadLetterCount().orElse(0) == 3);
+        Await.until(() -> runner.deadLetterCount().orElse(0) == 3);
 
         down.set(false);
         assertThat(console.retryAllDeadLetters()).isEqualTo(3);
 
-        awaitUntil(() -> delivered.size() == 3);
+        Await.until(() -> delivered.size() == 3);
         assertThat(delivered).containsExactlyInAnyOrder("n0", "n1", "n2");
         assertThat(runner.deadLetterCount().getAsLong()).isZero();
     }
@@ -141,13 +142,5 @@ class BackboneConsoleTest {
     void builderRequiresServiceRunner() {
         assertThatThrownBy(() -> BackboneConsole.builder().build())
             .isInstanceOf(IllegalStateException.class);
-    }
-
-    private static void awaitUntil(java.util.function.BooleanSupplier cond) throws Exception {
-        long deadline = System.currentTimeMillis() + 3000;
-        while (!cond.getAsBoolean() && System.currentTimeMillis() < deadline) {
-            Thread.sleep(20);
-        }
-        assertThat(cond.getAsBoolean()).isTrue();
     }
 }

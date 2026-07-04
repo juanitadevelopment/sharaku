@@ -1,5 +1,6 @@
 package net.teppan.backbone.event;
 
+import net.teppan.backbone.testsupport.Await;
 import net.teppan.shazo.jdbc.h2.H2DataSources;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -96,10 +97,7 @@ class OutboxTest {
 
             // The row is marked processed just after delivery; wait for it while
             // the poller is still running.
-            long deadline = System.currentTimeMillis() + 2000;
-            while (countPending() > 0 && System.currentTimeMillis() < deadline) {
-                Thread.sleep(20);
-            }
+            Await.until(() -> countPending() == 0);
             assertThat(countPending()).isZero();
         }
     }
@@ -184,7 +182,7 @@ class OutboxTest {
             down.set(false);                       // downstream fixed
             assertThat(outbox.retry(id)).isTrue();
 
-            awaitUntil(() -> !delivered.isEmpty());
+            Await.until(() -> !delivered.isEmpty());
             assertThat(delivered).containsExactly(new Ping("recover"));
             assertThat(outbox.deadLetterCount()).isZero();
             assertThat(outbox.pendingCount()).isZero();
@@ -216,14 +214,6 @@ class OutboxTest {
     }
 
     private static void awaitDeadLetters(Outbox outbox, long n) throws Exception {
-        awaitUntil(() -> outbox.deadLetterCount() >= n);
-    }
-
-    private static void awaitUntil(java.util.function.BooleanSupplier cond) throws Exception {
-        long deadline = System.currentTimeMillis() + 3000;
-        while (!cond.getAsBoolean() && System.currentTimeMillis() < deadline) {
-            Thread.sleep(20);
-        }
-        assertThat(cond.getAsBoolean()).isTrue();
+        Await.until(() -> outbox.deadLetterCount() >= n);
     }
 }

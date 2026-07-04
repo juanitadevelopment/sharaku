@@ -155,8 +155,7 @@ public final class ShellRepository<T> extends AbstractRepository<T, ShellCommand
     protected RawResult execute(List<ShellCommand> commands) throws ShazoException {
         var rows = new ArrayList<Map<String, Object>>();
         for (var shell : commands) {
-            log.debug("Shell: {} {}", shell.executable(),
-                      String.join(" ", shell.arguments()));
+            log.debug("Shell: {}", shell.safeDescription());
             rows.addAll(runShell(shell));
         }
         return RawResult.of(rows);
@@ -176,7 +175,7 @@ public final class ShellRepository<T> extends AbstractRepository<T, ShellCommand
         try {
             process = builder.start();
         } catch (IOException e) {
-            throw new ShazoException("Failed to start process: " + args, e);
+            throw new ShazoException("Failed to start process: " + shell.safeDescription(), e);
         }
 
         // Both streams are drained on dedicated virtual threads. This avoids the
@@ -214,7 +213,7 @@ public final class ShellRepository<T> extends AbstractRepository<T, ShellCommand
                 stdoutThread.join();
                 stderrThread.join();
                 throw new ShazoException(
-                    "Process timed out after " + timeout + ": " + args);
+                    "Process timed out after " + timeout + ": " + shell.safeDescription());
             }
             exitCode = process.exitValue();
             stdoutThread.join();
@@ -222,20 +221,20 @@ public final class ShellRepository<T> extends AbstractRepository<T, ShellCommand
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             process.destroyForcibly();
-            throw new ShazoException("Process interrupted: " + args, e);
+            throw new ShazoException("Process interrupted: " + shell.safeDescription(), e);
         }
 
         if (stdoutError.get() != null) {
-            throw new ShazoException("Failed to read stdout from: " + args, stdoutError.get());
+            throw new ShazoException("Failed to read stdout from: " + shell.safeDescription(), stdoutError.get());
         }
         if (stderrError.get() != null) {
-            throw new ShazoException("Failed to read stderr from: " + args, stderrError.get());
+            throw new ShazoException("Failed to read stderr from: " + shell.safeDescription(), stderrError.get());
         }
         List<String> stdoutLines = stdoutHolder.get();
         String       stderr      = stderrHolder.get();
 
         if (exitCode != 0) {
-            var msg = "Process exited with code " + exitCode + ": " + args;
+            var msg = "Process exited with code " + exitCode + ": " + shell.safeDescription();
             if (!stderr.isBlank()) {
                 msg += "\nstderr: " + stderr;
             }

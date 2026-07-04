@@ -1,5 +1,6 @@
 package net.teppan.backbone;
 
+import net.teppan.backbone.testsupport.Await;
 import net.teppan.shazo.ShazoException;
 import net.teppan.shazo.Describer;
 import net.teppan.shazo.jdbc.JdbcRepository;
@@ -137,7 +138,7 @@ class OutboxRelayPatternTest {
             String id = placeOrder(runner, "Acme");
 
             assertThat(orderPersisted(id)).isTrue();          // primary: synchronous
-            awaitUntil(() -> shipmentExists(id));             // shipping: eventually
+            Await.until(() -> shipmentExists(id));             // shipping: eventually
             assertThat(shippingRepo.retrieve(new Shipment(id, null)))
                 .map(Shipment::status).contains("REQUESTED");
         }
@@ -161,11 +162,11 @@ class OutboxRelayPatternTest {
             // as a PENDING outbox row that will be redelivered on restart.
             assertThat(orderPersisted(id)).isTrue();
             assertThat(shipmentExists(id)).isFalse();
-            awaitUntil(() -> runner.pendingEventCount().orElse(0) >= 1);
+            Await.until(() -> runner.pendingEventCount().orElse(0) >= 1);
 
             down.set(false);                  // shipping system recovers
-            awaitUntil(() -> shipmentExists(id));            // relay drains automatically
-            awaitUntil(() -> runner.pendingEventCount().orElse(1) == 0);
+            Await.until(() -> shipmentExists(id));            // relay drains automatically
+            Await.until(() -> runner.pendingEventCount().orElse(1) == 0);
         }
     }
 
@@ -184,8 +185,8 @@ class OutboxRelayPatternTest {
         try (var runner = relayRunner(relay)) {
             String id = placeOrder(runner, "Initech");
 
-            awaitUntil(() -> attempts.get() >= 2);
-            awaitUntil(() -> shipmentExists(id));
+            Await.until(() -> attempts.get() >= 2);
+            Await.until(() -> shipmentExists(id));
             // Redelivered at least twice, yet the idempotent MERGE leaves one row.
             assertThat(shipmentCount()).isEqualTo(1);
         }
@@ -230,19 +231,5 @@ class OutboxRelayPatternTest {
         } catch (ShazoException e) {
             throw new RuntimeException(e);   // surfaces to the outbox → retried
         }
-    }
-
-    @FunctionalInterface
-    private interface Condition {
-        boolean test() throws Exception;
-    }
-
-    private static void awaitUntil(Condition condition) throws Exception {
-        long deadline = System.currentTimeMillis() + 3000;
-        while (System.currentTimeMillis() < deadline) {
-            if (condition.test()) return;
-            Thread.sleep(20);
-        }
-        throw new AssertionError("condition not met within timeout");
     }
 }

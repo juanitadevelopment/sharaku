@@ -1,6 +1,7 @@
 package net.teppan.backbone;
 
 import net.teppan.backbone.event.PersistentEventQueue;
+import net.teppan.backbone.testsupport.Await;
 import net.teppan.shazo.jdbc.SessionInitDataSource;
 import net.teppan.shazo.jdbc.h2.H2DataSources;
 import org.junit.jupiter.api.Test;
@@ -9,7 +10,6 @@ import javax.sql.DataSource;
 import java.io.Serializable;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -39,7 +39,7 @@ class ServiceRunnerPersistentQueueTest {
             PersistentEventQueue<ExternalOrder> q = runner.persistentQueue("orders");
             assertThat(q.receive("m-1", new ExternalOrder("order-1"))).isTrue();
 
-            awaitUntil(() -> received.size() == 1);
+            Await.until(() -> received.size() == 1);
             assertThat(received).containsExactly(new ExternalOrder("order-1"));
         }
     }
@@ -71,7 +71,7 @@ class ServiceRunnerPersistentQueueTest {
             assertThat(acme.receive("m-1", new ExternalOrder("acme-1"))).isTrue();
             assertThat(globex.receive("m-1", new ExternalOrder("globex-1"))).isTrue();
 
-            awaitUntil(() -> received.size() == 2);
+            Await.until(() -> received.size() == 2);
             assertThat(received).containsExactlyInAnyOrder(
                 new ExternalOrder("acme-1"), new ExternalOrder("globex-1"));
 
@@ -100,13 +100,5 @@ class ServiceRunnerPersistentQueueTest {
                 .build())
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("orphan");
-    }
-
-    private static void awaitUntil(BooleanSupplier cond) throws Exception {
-        long deadline = System.currentTimeMillis() + 3000;
-        while (!cond.getAsBoolean() && System.currentTimeMillis() < deadline) {
-            Thread.sleep(20);
-        }
-        assertThat(cond.getAsBoolean()).isTrue();
     }
 }

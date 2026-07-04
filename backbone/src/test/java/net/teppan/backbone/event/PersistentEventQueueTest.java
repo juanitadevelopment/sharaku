@@ -1,5 +1,6 @@
 package net.teppan.backbone.event;
 
+import net.teppan.backbone.testsupport.Await;
 import net.teppan.shazo.jdbc.h2.H2DataSources;
 import org.junit.jupiter.api.Test;
 
@@ -13,7 +14,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.BooleanSupplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -128,7 +128,7 @@ class PersistentEventQueueTest {
             q.publish(new ExternalOrder("order-a"));
             q.publish(new ExternalOrder("order-a"));   // same payload, still enqueued
 
-            awaitUntil(() -> received.size() == 2);
+            Await.until(() -> received.size() == 2);
             assertThat(received).containsExactly(
                 new ExternalOrder("order-a"), new ExternalOrder("order-a"));
         }
@@ -145,7 +145,7 @@ class PersistentEventQueueTest {
 
             q.receive("evt-5", new ExternalOrder("order-5"));
 
-            awaitUntil(() -> !a.isEmpty() && !b.isEmpty());
+            Await.until(() -> !a.isEmpty() && !b.isEmpty());
             assertThat(a).containsExactly(new ExternalOrder("order-5"));
             assertThat(b).containsExactly(new ExternalOrder("order-5"));
         }
@@ -184,7 +184,7 @@ class PersistentEventQueueTest {
 
             q.receive("evt-7", new ExternalOrder("order-7"));
 
-            awaitUntil(() -> q.deadLetterCount() == 1);
+            Await.until(() -> q.deadLetterCount() == 1);
             var dead = q.peekDeadLetters(10);
             assertThat(dead).hasSize(1);
 
@@ -192,7 +192,7 @@ class PersistentEventQueueTest {
             down.set(false);
             assertThat(q.retry(dead.get(0).id())).isTrue();
 
-            awaitUntil(() -> delivered.get() == 1);
+            Await.until(() -> delivered.get() == 1);
             assertThat(q.deadLetterCount()).isZero();
         }
     }
@@ -203,13 +203,5 @@ class PersistentEventQueueTest {
         assertThatThrownBy(() -> new PersistentEventQueue<>("bad-name", ExternalOrder.class, ds))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("Queue name");
-    }
-
-    private static void awaitUntil(BooleanSupplier cond) throws Exception {
-        long deadline = System.currentTimeMillis() + 3000;
-        while (!cond.getAsBoolean() && System.currentTimeMillis() < deadline) {
-            Thread.sleep(20);
-        }
-        assertThat(cond.getAsBoolean()).isTrue();
     }
 }

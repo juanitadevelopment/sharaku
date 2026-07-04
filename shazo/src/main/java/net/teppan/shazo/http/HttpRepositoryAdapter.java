@@ -7,6 +7,7 @@ import net.teppan.shazo.Page;
 import net.teppan.shazo.RawResult;
 import net.teppan.shazo.Repository;
 import net.teppan.shazo.ShazoException;
+import net.teppan.shazo.http.internal.Frames;
 import net.teppan.shazo.http.internal.Protocol;
 import net.teppan.shazo.http.internal.RowCodec;
 import org.slf4j.Logger;
@@ -17,7 +18,9 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -54,24 +57,47 @@ public final class HttpRepositoryAdapter<T> implements Repository<T>, AutoClosea
     private static final Logger log =
         LoggerFactory.getLogger(HttpRepositoryAdapter.class);
 
+    /**
+     * Default per-request timeout applied when none is specified. A request that
+     * has not completed within this window fails with {@link ShazoException}
+     * rather than blocking the calling thread indefinitely.
+     */
+    public static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofSeconds(30);
+
     private final URI        endpoint;
     private final Codec<T>   codec;
     private final HttpClient client;
+    private final Duration   requestTimeout;
 
     /**
-     * Constructs an adapter using a new default {@link HttpClient}.
+     * Constructs an adapter using a new default {@link HttpClient} and the
+     * {@link #DEFAULT_REQUEST_TIMEOUT}.
      *
      * @param endpoint the URL of the {@link HttpRepositoryServlet}; never {@code null}
      * @param codec    the codec for domain objects; must match the servlet's codec;
      *                 never {@code null}
      */
     public HttpRepositoryAdapter(URI endpoint, Codec<T> codec) {
-        this(endpoint, codec, HttpClient.newHttpClient());
+        this(endpoint, codec, HttpClient.newHttpClient(), DEFAULT_REQUEST_TIMEOUT);
     }
 
     /**
-     * Constructs an adapter using a caller-supplied {@link HttpClient}.
-     * Use this constructor to configure timeouts, authentication, proxies, etc.
+     * Constructs an adapter using a new default {@link HttpClient} and a
+     * caller-supplied per-request timeout.
+     *
+     * @param endpoint       the URL of the {@link HttpRepositoryServlet}; never {@code null}
+     * @param codec          the codec for domain objects; must match the servlet's
+     *                       codec; never {@code null}
+     * @param requestTimeout the maximum time to wait for each request to complete;
+     *                       must be positive
+     */
+    public HttpRepositoryAdapter(URI endpoint, Codec<T> codec, Duration requestTimeout) {
+        this(endpoint, codec, HttpClient.newHttpClient(), requestTimeout);
+    }
+
+    /**
+     * Constructs an adapter using a caller-supplied {@link HttpClient} and the
+     * {@link #DEFAULT_REQUEST_TIMEOUT}.
      *
      * @param endpoint the URL of the {@link HttpRepositoryServlet}; never {@code null}
      * @param codec    the codec for domain objects; must match the servlet's codec;
@@ -79,9 +105,36 @@ public final class HttpRepositoryAdapter<T> implements Repository<T>, AutoClosea
      * @param client   the {@link HttpClient} to use for all requests; never {@code null}
      */
     public HttpRepositoryAdapter(URI endpoint, Codec<T> codec, HttpClient client) {
-        this.endpoint = Objects.requireNonNull(endpoint, "endpoint");
-        this.codec    = Objects.requireNonNull(codec,    "codec");
-        this.client   = Objects.requireNonNull(client,   "client");
+        this(endpoint, codec, client, DEFAULT_REQUEST_TIMEOUT);
+    }
+
+    /**
+     * Constructs an adapter using a caller-supplied {@link HttpClient} and
+     * per-request timeout. Use this constructor to configure authentication,
+     * proxies, connect timeout (on the client), and the response timeout.
+     *
+     * <p>Note the distinction: a connect timeout set on the {@link HttpClient}
+     * bounds only connection establishment, whereas {@code requestTimeout} is
+     * applied per {@link HttpRequest} and bounds the whole request/response
+     * exchange — a slow or stuck server hitting it fails the call rather than
+     * hanging the calling thread.
+     *
+     * @param endpoint       the URL of the {@link HttpRepositoryServlet}; never {@code null}
+     * @param codec          the codec for domain objects; must match the servlet's
+     *                       codec; never {@code null}
+     * @param client         the {@link HttpClient} to use for all requests; never {@code null}
+     * @param requestTimeout the maximum time to wait for each request to complete;
+     *                       must be positive
+     */
+    public HttpRepositoryAdapter(URI endpoint, Codec<T> codec, HttpClient client,
+                                 Duration requestTimeout) {
+        this.endpoint       = Objects.requireNonNull(endpoint, "endpoint");
+        this.codec          = Objects.requireNonNull(codec,    "codec");
+        this.client         = Objects.requireNonNull(client,   "client");
+        this.requestTimeout = Objects.requireNonNull(requestTimeout, "requestTimeout");
+        if (requestTimeout.isZero() || requestTimeout.isNegative()) {
+            throw new IllegalArgumentException("requestTimeout must be positive: " + requestTimeout);
+        }
     }
 
     // ── Repository methods ────────────────────────────────────────────────────
@@ -205,11 +258,10 @@ public final class HttpRepositoryAdapter<T> implements Repository<T>, AutoClosea
             var in = new DataInputStream(new ByteArrayInputStream(resp));
             byte status = in.readByte();
             checkException(status, in);
-            int count   = in.readInt();
+            int count   = Frames.readBounded(in, "gather count");
             var results = new ArrayList<T>(count);
             for (int i = 0; i < count; i++) {
-                int    len   = in.readInt();
-                byte[] bytes = in.readNBytes(len);
+                byte[] bytes = in.readNBytes(Frames.readBounded(in, "item length"));
                 results.add(codec.decode(bytes));
             }
             return List.copyOf(results);
@@ -233,11 +285,10 @@ public final class HttpRepositoryAdapter<T> implements Repository<T>, AutoClosea
             byte status = in.readByte();
             checkException(status, in);
             boolean hasMore = in.readByte() != 0;
-            int count       = in.readInt();
+            int count       = Frames.readBounded(in, "gather count");
             var results = new ArrayList<T>(count);
             for (int i = 0; i < count; i++) {
-                int    len   = in.readInt();
-                byte[] bytes = in.readNBytes(len);
+                byte[] bytes = in.readNBytes(Frames.readBounded(in, "item length"));
                 results.add(codec.decode(bytes));
             }
             return new Gathered<>(results, hasMore);
@@ -284,6 +335,7 @@ public final class HttpRepositoryAdapter<T> implements Repository<T>, AutoClosea
     private byte[] post(byte[] body) throws ShazoException {
         var request = HttpRequest.newBuilder()
             .uri(endpoint)
+            .timeout(requestTimeout)
             .POST(HttpRequest.BodyPublishers.ofByteArray(body))
             .header("Content-Type", "application/octet-stream")
             .build();
@@ -295,6 +347,9 @@ public final class HttpRepositoryAdapter<T> implements Repository<T>, AutoClosea
                     "HTTP " + response.statusCode() + " from " + endpoint);
             }
             return response.body();
+        } catch (HttpTimeoutException e) {
+            throw new ShazoException(
+                "HTTP request to " + endpoint + " timed out after " + requestTimeout, e);
         } catch (IOException e) {
             throw new ShazoException("HTTP request to " + endpoint + " failed", e);
         } catch (InterruptedException e) {

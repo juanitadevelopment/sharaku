@@ -1,13 +1,13 @@
 package net.teppan.demo.orders;
 
 import net.teppan.backbone.AppServiceException;
+import net.teppan.demo.testsupport.Await;
 import net.teppan.shazo.jdbc.h2.H2DataSources;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import javax.sql.DataSource;
-import java.util.function.BooleanSupplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -31,15 +31,6 @@ class OrderShowcaseTest {
     @AfterEach
     void tearDown() {
         showcase.close();
-    }
-
-    private static void awaitUntil(BooleanSupplier condition) throws InterruptedException {
-        long deadline = System.currentTimeMillis() + 3000;
-        while (System.currentTimeMillis() < deadline) {
-            if (condition.getAsBoolean()) return;
-            Thread.sleep(25);
-        }
-        throw new AssertionError("condition not met within timeout");
     }
 
     private long auditCount(String orderId) throws Exception {
@@ -66,7 +57,7 @@ class OrderShowcaseTest {
     void placeOrder_deliversConfirmationAfterCommit() throws Exception {
         String id = showcase.placeOrder("Globex");
         // OrderPlaced flows through the durable outbox and is delivered async.
-        awaitUntil(() -> showcase.confirmationsSent().contains(id));
+        Await.until(() -> showcase.confirmationsSent().contains(id));
     }
 
     @Test
@@ -97,6 +88,6 @@ class OrderShowcaseTest {
 
         showcase.placeOrder("Stark");
         // Eventually the outbox drains to zero pending.
-        awaitUntil(() -> showcase.runner().pendingEventCount().getAsLong() == 0);
+        Await.until(() -> showcase.runner().pendingEventCount().getAsLong() == 0);
     }
 }

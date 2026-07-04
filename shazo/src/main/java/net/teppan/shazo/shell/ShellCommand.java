@@ -35,4 +35,23 @@ public record ShellCommand(String executable, List<String> arguments) implements
     public static ShellCommand of(String executable, String... arguments) {
         return new ShellCommand(executable, List.of(arguments));
     }
+
+    /**
+     * A log- and error-safe description of this command that names the
+     * {@code executable} and the <em>number</em> of arguments but never their
+     * values.
+     *
+     * <p>Argument values routinely carry request-specific data — record ids,
+     * file paths, tokens, credentials — supplied by the describer. Because
+     * {@link ShellRepository} surfaces failures as {@code ShazoException}
+     * messages, and those messages can be relayed to a remote caller by the
+     * HTTP transport, the repository logs and reports this description rather
+     * than the raw argument list, keeping argument values out of logs and
+     * off the wire.
+     *
+     * @return e.g. {@code "grep [2 arg(s)]"}
+     */
+    public String safeDescription() {
+        return executable + " [" + arguments.size() + " arg(s)]";
+    }
 }

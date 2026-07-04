@@ -274,6 +274,43 @@ try (var repo = new HttpRepositoryAdapter<>(URI.create("http://host/api/persons"
 }
 ```
 
+## Security model
+
+Most backends touch only your own database, but two — **HTTP** and **shell** —
+cross a trust boundary, so their assumptions are worth stating plainly.
+
+**Trust the network, or don't expose it.** The HTTP transport carries a compact
+binary protocol with no built-in authentication, authorization, or TLS, and the
+servlet exposes every `Repository` operation (read *and* write). It is designed
+to run **inside a trusted network** — service-to-service, behind your perimeter.
+Do not put `HttpRepositoryServlet` directly on an untrusted network. Terminate
+TLS, authenticate callers, and cap request size at a reverse proxy or the servlet
+container in front of it; those concerns live at that layer by design, not in the
+persistence library.
+
+Within that model the transport still hardens the two things it fully controls:
+
+- **Deserialization is allowlisted.** The default Java-serialization `Codec`
+  refuses to instantiate any class you did not declare, so a hostile or corrupt
+  response cannot drive a gadget-chain attack (see *Remote HTTP* above). `catalog`
+  avoids object deserialization entirely, using a scalar-only cell format.
+- **Response frames are bounds-checked.** Counts and lengths read from a response
+  are validated against the bytes actually received, so a malformed frame fails
+  cleanly with `ShazoException` instead of driving a huge allocation.
+- **Requests time out.** `HttpRepositoryAdapter` applies a per-request timeout
+  (default 30s; configurable) so a slow or stuck server fails the call rather than
+  hanging the calling thread indefinitely.
+
+**Shell commands are code, not input.** `ShellRepository` runs the
+`ShellCommand`s your **describer** produces — trusted code you wrote, the same
+trust level as the SQL a `JdbcRepository` executes. It is not a place to run
+end-user input, and there is deliberately no executable allowlist (you are already
+choosing the executable). Argument *values*, however, often carry per-request data
+(ids, paths, tokens), so the repository keeps them out of logs and error messages:
+failures name the executable and the **number** of arguments, never their values —
+which also stops such values from leaking across the HTTP transport when a shell
+repository is fronted by the servlet.
+
 ## Schema migrations
 
 `SchemaManager` applies `V<n>__<description>.sql` scripts from a classpath
