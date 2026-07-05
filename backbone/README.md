@@ -9,13 +9,13 @@ work per request, composable services, domain events delivered *after* commit,
 scheduled jobs, and basic runtime introspection — without a heavyweight
 container, dynamic proxies, or XML.
 
-> **Status:** early release (`0.3.2`). API may still change before `1.0.0`.
+> **Status:** early release (`0.3.3`). API may still change before `1.0.0`.
 
 ## Requirements
 
 - **Java 21+**
 - **shazo** — lives in the same [`sharaku`](..) repo and is always version-aligned
-  (`0.3.2`); no separate install
+  (`0.3.3`); no separate install
 
 ## What it gives you
 
@@ -410,7 +410,7 @@ which builds shazo transitively:
 ```kotlin
 repositories { maven { url = uri("https://jitpack.io") } }
 dependencies {
-    implementation("com.github.juanitadevelopment.sharaku:backbone:0.3.2")
+    implementation("com.github.juanitadevelopment.sharaku:backbone:0.3.3")
 }
 ```
 

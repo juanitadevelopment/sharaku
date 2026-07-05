@@ -14,7 +14,7 @@ two artifacts that share one lineage and evolve together:
 `backbone` builds on `shazo` (one-way dependency); `shazo` has no dependency on
 `backbone` and can be used on its own.
 
-> **Status:** early release (`0.3.2`). API may still change before `1.0.0`.
+> **Status:** early release (`0.3.3`). API may still change before `1.0.0`.
 
 ## Modules
 
@@ -35,11 +35,11 @@ repositories {
 }
 dependencies {
     // persistence only (no JDBC driver pulled in)
-    implementation("com.github.juanitadevelopment.sharaku:shazo:0.3.2")
+    implementation("com.github.juanitadevelopment.sharaku:shazo:0.3.3")
     // optional: embedded/file/server H2 DataSource factory (adds H2)
-    implementation("com.github.juanitadevelopment.sharaku:shazo-h2:0.3.2")
+    implementation("com.github.juanitadevelopment.sharaku:shazo-h2:0.3.3")
     // application runtime (pulls in shazo transitively)
-    implementation("com.github.juanitadevelopment.sharaku:backbone:0.3.2")
+    implementation("com.github.juanitadevelopment.sharaku:backbone:0.3.3")
 }
 ```
 
