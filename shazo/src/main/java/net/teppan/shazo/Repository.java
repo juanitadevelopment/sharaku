@@ -62,6 +62,12 @@ public interface Repository<T> {
     /**
      * Returns {@code true} if a matching entity exists in storage.
      *
+     * <p>An existence check, not a fetch: the describer's {@code contains}
+     * command should test for a row (e.g. {@code SELECT 1 ... WHERE key = ?})
+     * without materializing the entity — use {@link #retrieve}/{@link #find}
+     * when you actually need the object. The condition is whatever the describer
+     * writes; {@code contains} does not itself narrow to a primary key.
+     *
      * @param query an object whose fields identify the entity to look up
      * @return {@code true} if a match exists
      * @throws ShazoException if the underlying storage system reports an error
@@ -121,6 +127,13 @@ public interface Repository<T> {
      * domain objects would be wasted work. Returns an empty {@link RawResult}
      * when no matches exist.
      *
+     * <p><b>Row order is the describer's, not the framework's:</b> shazo injects
+     * no ordering — the rows come back in whatever order the describer's catalog
+     * command specifies (its {@code ORDER BY}, if any) or, without one, in the
+     * backend's unspecified order. Give the catalog command a stable
+     * {@code ORDER BY} when order matters (it is also what offset paging via
+     * {@link #catalog(Object, Page)} assumes).
+     *
      * @param query an object that serves as filter criteria
      * @return the matching rows in table form; never {@code null}
      * @throws ShazoException if the storage operation fails
@@ -157,6 +170,17 @@ public interface Repository<T> {
      *
      * <p>For match sets that may be large, prefer {@link #gather(Object, Page)},
      * which bounds both the memory and the per-key retrieves.
+     *
+     * <p>Order follows the catalog command's — see {@link #catalog(Object)}.
+     *
+     * <p><b>Read consistency:</b> a bare {@code gather} runs its catalog and each
+     * per-key retrieve as separate operations, each of which may borrow a
+     * <em>different</em> pooled connection — so a concurrent commit between them
+     * can make the result reflect more than one snapshot (a key cataloged but
+     * then deleted simply drops out). When you need a single consistent snapshot,
+     * run the {@code gather} inside a transaction (a {@code ServiceRunner} service
+     * or {@code JdbcRepository.transact}), which binds every sub-query to one
+     * connection.
      *
      * @param query an object that serves as filter criteria
      * @return an immutable list of matching entities; never {@code null}

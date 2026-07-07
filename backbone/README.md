@@ -350,6 +350,27 @@ Each job runs as a `Principal.system()` unit of work; jobs can be
 live in memory only — for deadlines that must survive a restart, persist them and
 rearm on startup.
 
+### Typed repositories from a timer job
+
+A timer job's `ctx` gives you a transaction (`ctx.connection()`) but **not**
+`ctx.repository(Type)` — the scheduler's runner carries no describers. That is by
+design: rather than do typed-repository work off the timer, have the job **trigger
+a service that owns its own runner** (with the describers registered), so the scan
+runs where typed repositories already live.
+
+```java
+// The job body ignores its own ctx and calls the app's service, which re-enters
+// its own ServiceRunner — so it gets ctx.repository(...) even though the timer's
+// context would only offer raw ctx.connection().
+scheduler.schedule("deadlines", Duration.ofMinutes(5),
+    ctx -> deadlineService.sweep(Instant.now()));   // sweep() runs on its own runner
+```
+
+This "the timer triggers a runner-owning service" idiom keeps the scheduler thin
+and is the intended way to do repository work on a schedule (validated by the
+tailwalk-flow deadline scan). Reach for `ctx.connection()` in a job only for
+genuinely raw, describer-free SQL.
+
 ### Tenant-scoped and fan-out jobs
 
 A scheduler built with `tenantRouter(...)` can bind a job to one tenant, or fan a
