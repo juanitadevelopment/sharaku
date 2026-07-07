@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+#
+# Forbidden-token scrub gate (sharaku/soba/tailwalk/ReturnOfSharaku).
+#
+# Installed identically as .githooks/pre-commit and .githooks/pre-push in
+# every repo of the family. Contains NO actual forbidden tokens itself — it
+# only knows how to load and apply an external pattern file that lives
+# outside every git repository (see that file's own header for why).
+#
+# Activate per clone with:  git config core.hooksPath .githooks
+
+set -euo pipefail
+
+PATTERNS_FILE="${SHARAKU_SCRUB_PATTERNS:-$HOME/.sharaku-scrub-patterns}"
+HOOK_NAME="$(basename "$0")"
+NULL_SHA="0000000000000000000000000000000000000000"
+
+if [ ! -f "$PATTERNS_FILE" ]; then
+    echo "scrub-gate: pattern file not found at $PATTERNS_FILE" >&2
+    echo "scrub-gate: refusing to run $HOOK_NAME without it (fail-closed)." >&2
+    echo "scrub-gate: set SHARAKU_SCRUB_PATTERNS if it lives elsewhere on this machine." >&2
+    exit 1
+fi
+
+# Historical/legacy snapshots that are INTENTIONALLY tracked and exempt
+# (ReturnOfSharaku's oldsrc/ and gz/ — CLAUDE.md: "the pre-modernization
+# snapshot, historical, tracked"). A no-op pathspec in repos with no such dirs.
+EXCLUDE_PATHSPECS=(':!oldsrc' ':!oldsrc/**' ':!gz' ':!gz/**')
+
+# Scans the ADDED lines of `git diff <range args> -- . <excludes>` against
+# every pattern in PATTERNS_FILE. Prints offending lines; returns 1 on a hit.
+scan() {
+    local added
+    added="$(git diff -U0 --no-color "$@" -- . "${EXCLUDE_PATHSPECS[@]}" 2>/dev/null \
+        | grep -E '^\+[^+]' || true)"
+    [ -z "$added" ] && return 0
+
+    local hit=0
+    while IFS= read -r pattern; do
+        [ -z "$pattern" ] && continue
+        case "$pattern" in \#*) continue ;; esac
+        if echo "$added" | grep -qE "$pattern"; then
+            echo "scrub-gate: forbidden token matched pattern: $pattern" >&2
+            echo "$added" | grep -E "$pattern" | sed 's/^/  /' >&2
+            hit=1
+        fi
+    done < "$PATTERNS_FILE"
+
+    return $hit
+}
+
+case "$HOOK_NAME" in
+    pre-commit)
+        if ! scan --cached; then
+            echo "scrub-gate: BLOCKED commit — forbidden token(s) found in staged changes." >&2
+            exit 1
+        fi
+        ;;
+    pre-push)
+        blocked=0
+        while read -r local_ref local_sha remote_ref remote_sha; do
+            [ "$local_sha" = "$NULL_SHA" ] && continue   # deleting a ref: nothing to scan
+            if [ "$remote_sha" = "$NULL_SHA" ]; then
+                # New branch: scan against origin/main if it exists, else the whole history is new — skip range-diff and just check the tip commit's own diff.
+                if git rev-parse --verify -q origin/main >/dev/null; then
+                    range="origin/main..$local_sha"
+                else
+                    range="$local_sha~1..$local_sha"
+                fi
+            else
+                range="$remote_sha..$local_sha"
+            fi
+            if ! scan "$range"; then
+                blocked=1
+            fi
+        done
+        if [ "$blocked" -ne 0 ]; then
+            echo "scrub-gate: BLOCKED push — forbidden token(s) found in outgoing commits." >&2
+            exit 1
+        fi
+        ;;
+    *)
+        echo "scrub-gate: unknown hook invocation '$HOOK_NAME'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0
