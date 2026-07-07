@@ -17,6 +17,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
@@ -209,8 +210,16 @@ public final class BlobStore {
      * so they are part of whatever transaction (or none) {@code conn} is in.
      */
     private BlobRef insert(Connection conn, InputStream content, BlobMeta meta) throws SQLException {
-        var tracked   = new DigestingInputStream(content);
-        var createdAt = Instant.now();
+        var tracked = new DigestingInputStream(content);
+        // Truncated to microseconds so the BlobRef returned here is byte-for-byte
+        // equal to what a later metadata(id) read produces: both H2's and
+        // PostgreSQL's default TIMESTAMP column store 6 fractional digits, but
+        // Instant.now() can carry true nanosecond precision on some JVMs (observed
+        // on Linux; not on macOS, where the mismatch never showed up locally).
+        // Matching the DB's precision up front — rather than only in the test
+        // that happens to compare the two — keeps the equality BlobRef's javadoc
+        // implies true for every caller, not just this one assertion.
+        var createdAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
         long id;
         try (var ps = conn.prepareStatement(
                 "INSERT INTO " + TABLE + " (name, media_type, byte_size, sha256, content, created_at)"

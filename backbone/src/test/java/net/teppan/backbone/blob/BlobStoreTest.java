@@ -111,6 +111,18 @@ class BlobStoreTest {
     }
 
     @Test
+    void createdAtIsTruncatedToMicrosSoItSurvivesTheDatabaseRoundTrip() throws Exception {
+        // H2's (and PostgreSQL's) default TIMESTAMP column keeps 6 fractional
+        // digits; a JVM whose Instant.now() carries true nanosecond precision
+        // (observed on Linux, not on this suite's usual macOS run) would
+        // otherwise make store()'s in-memory BlobRef unequal to a later
+        // metadata() read purely from clock precision — deterministic
+        // regardless of the platform running this test.
+        var ref = store.store(new ByteArrayInputStream("x".getBytes()), new BlobMeta("t.txt", "text/plain"));
+        assertThat(ref.createdAt().getNano() % 1000).isZero();
+    }
+
+    @Test
     void metadataForMissingIdIsEmpty() throws Exception {
         assertThat(store.metadata(999_999L)).isEmpty();
     }
