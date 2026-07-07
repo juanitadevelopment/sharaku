@@ -21,34 +21,49 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need history for the diff-based scrub gate below
 
       - name: Forbidden-token scrub gate
         env:
           SCRUB_PATTERNS: ${{ secrets.SCRUB_PATTERNS }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
         run: |
           # Server-side defense-in-depth behind the local .githooks/pre-commit
-          # gate (see .githooks/README.md). Patterns come from a repo secret,
-          # never from a committed file. Reports file:line only — never the
-          # matched content — since this repo's Actions logs are public.
+          # gate (see .githooks/README.md) — SAME diff-based semantics (only
+          # lines ADDED since BASE_SHA), so this never re-flags pre-existing
+          # historical references (e.g. backbone/README.md's "old BOR.xml
+          # <repository name=...>" design-rationale comment), only new ones.
+          # Patterns come from a repo secret, never a committed file. Reports
+          # the file only — never the matched content — since this repo's
+          # Actions logs are public.
           if [ -z "$SCRUB_PATTERNS" ]; then
             echo "::warning::SCRUB_PATTERNS secret not set — scrub gate skipped."
             exit 0
           fi
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            BASE_SHA="$(git hash-object -t tree /dev/null)"   # first push to a new branch
+          fi
           PATTERN_FILE="$(mktemp)"
           printf '%s\n' "$SCRUB_PATTERNS" > "$PATTERN_FILE"
           FOUND=0
-          while IFS= read -r pattern; do
-            [ -z "$pattern" ] && continue
-            case "$pattern" in \#*) continue ;; esac
-            HITS="$(git grep -nE "$pattern" -- . ':!oldsrc' ':!oldsrc/**' ':!gz' ':!gz/**' 2>/dev/null | cut -d: -f1,2)"
-            if [ -n "$HITS" ]; then
-              echo "$HITS"
-              FOUND=1
-            fi
-          done < "$PATTERN_FILE"
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            ADDED="$(git diff -U0 "$BASE_SHA" "$HEAD_SHA" -- "$file" | grep -E '^\+[^+]' || true)"
+            [ -z "$ADDED" ] && continue
+            while IFS= read -r pattern; do
+              [ -z "$pattern" ] && continue
+              case "$pattern" in \#*) continue ;; esac
+              if echo "$ADDED" | grep -qE "$pattern"; then
+                echo "possible forbidden token added in: $file"
+                FOUND=1
+              fi
+            done < "$PATTERN_FILE"
+          done < <(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- . ':!oldsrc' ':!oldsrc/**' ':!gz' ':!gz/**')
           rm -f "$PATTERN_FILE"
           if [ "$FOUND" -ne 0 ]; then
-            echo "::error::Forbidden token(s) found in tracked source (file:line above; content withheld from logs)."
+            echo "::error::Forbidden token(s) found in lines added between $BASE_SHA and $HEAD_SHA (see files above; content withheld from public logs — inspect the diff locally)."
             exit 1
           fi
           echo "scrub-gate: clean."
