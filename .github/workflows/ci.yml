@@ -22,6 +22,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Forbidden-token scrub gate
+        env:
+          SCRUB_PATTERNS: ${{ secrets.SCRUB_PATTERNS }}
+        run: |
+          # Server-side defense-in-depth behind the local .githooks/pre-commit
+          # gate (see .githooks/README.md). Patterns come from a repo secret,
+          # never from a committed file. Reports file:line only — never the
+          # matched content — since this repo's Actions logs are public.
+          if [ -z "$SCRUB_PATTERNS" ]; then
+            echo "::warning::SCRUB_PATTERNS secret not set — scrub gate skipped."
+            exit 0
+          fi
+          PATTERN_FILE="$(mktemp)"
+          printf '%s\n' "$SCRUB_PATTERNS" > "$PATTERN_FILE"
+          FOUND=0
+          while IFS= read -r pattern; do
+            [ -z "$pattern" ] && continue
+            case "$pattern" in \#*) continue ;; esac
+            HITS="$(git grep -nE "$pattern" -- . ':!oldsrc' ':!oldsrc/**' ':!gz' ':!gz/**' 2>/dev/null | cut -d: -f1,2)"
+            if [ -n "$HITS" ]; then
+              echo "$HITS"
+              FOUND=1
+            fi
+          done < "$PATTERN_FILE"
+          rm -f "$PATTERN_FILE"
+          if [ "$FOUND" -ne 0 ]; then
+            echo "::error::Forbidden token(s) found in tracked source (file:line above; content withheld from logs)."
+            exit 1
+          fi
+          echo "scrub-gate: clean."
+
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
